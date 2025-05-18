@@ -380,7 +380,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   
   <!-- OneSignal -->
-  <script src="https://cdn.onesignal.com/sdks/OneSignalSDK.js" async></script>
   
   <!-- Main JS -->
   <script>
@@ -391,6 +390,7 @@
     let refreshInterval = 30 * 60 * 1000; // 30 minutes
     const NOAA_API_URL = 'https://services.swpc.noaa.gov/json/alerts.json';
     const KP_POLYLINE_URL = '/kp6.json';
+    const ONESIGNAL_APP_ID = "REPLACE_WITH_REAL_APP_ID";
     let userKpThreshold = parseInt(localStorage.getItem('kpThreshold') || '6');
     
     // Check if we're in embed mode
@@ -465,18 +465,13 @@
         .catch(error => console.error('Error fetching aurora line:', error));
     }
     
+    
     // Fetch alerts from NOAA
     function fetchAlerts() {
       document.getElementById('status').textContent = 'Loading...';
       document.getElementById('status-details').textContent = 'Checking NOAA space weather alerts...';
       
-      fetch(NOAA_API_URL)
-        .then(response => {
-          if (!response.ok) {
-            throw new Error('Network response was not ok');
-          }
-          return response.json();
-        })
+      fetchAlertsJSON()
         .then(data => {
           // Find most recent K-index alert
           const kIndexAlerts = data.filter(alert => 
@@ -498,6 +493,29 @@
         })
         .finally(() => {
           updateTimestamp();
+        });
+    }
+    
+    // Helper function to fetch alerts with CORS fallback
+    function fetchAlertsJSON() {
+      return fetch(NOAA_API_URL, { cache: 'no-store' })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.json();
+        })
+        .catch(error => {
+          console.log('Direct fetch failed, trying proxy:', error);
+          // Fallback to CORS proxy
+          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(NOAA_API_URL)}`;
+          return fetch(proxyUrl)
+            .then(response => {
+              if (!response.ok) {
+                throw new Error('Proxy fetch also failed');
+              }
+              return response.json();
+            });
         });
     }
     
@@ -589,22 +607,31 @@
     
     // Initialize push notifications
     function initPush() {
-      if (window.OneSignal) {
-        window.OneSignal.init({
-          appId: "REPLACE_APP_ID",
-          notifyButton: {
-            enable: false,
-          },
-        });
-        
-        // Ask for notification permission on first load
-        const hasPrompted = localStorage.getItem('notificationPrompted');
-        if (!hasPrompted) {
-          setTimeout(() => {
-            window.OneSignal.showNativePrompt();
-            localStorage.setItem('notificationPrompted', 'true');
-          }, 3000);
-        }
+      if (!ONESIGNAL_APP_ID.startsWith('REPLACE')) {
+        // Dynamically load OneSignal SDK
+        const script = document.createElement('script');
+        script.src = 'https://cdn.onesignal.com/sdks/OneSignalSDK.js';
+        script.async = true;
+        script.onload = function() {
+          if (window.OneSignal) {
+            window.OneSignal.init({
+              appId: ONESIGNAL_APP_ID,
+              notifyButton: {
+                enable: false,
+              },
+            });
+            
+            // Ask for notification permission on first load
+            const hasPrompted = localStorage.getItem('notificationPrompted');
+            if (!hasPrompted) {
+              setTimeout(() => {
+                window.OneSignal.showNativePrompt();
+                localStorage.setItem('notificationPrompted', 'true');
+              }, 3000);
+            }
+          }
+        };
+        document.head.appendChild(script);
       }
     }
     
