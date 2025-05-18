@@ -442,19 +442,15 @@
         }
       }
       
-      // Ensure we show something even if fetch fails
-      // Use a short timeout to ensure UI gets updated even on slow devices
-      setTimeout(function() {
-        // Check if we're still loading
-        if (document.getElementById('status').textContent === 'Loading...') {
-          // Use sample data immediately for mobile users
-          processAlertData(sampleAlerts);
-          updateTimestamp();
-        }
-      }, 1000);
-      
-      // Fetch alerts on load
-      fetchAlerts();
+      // Use sample data immediately if on mobile
+      if (/Mobi|Android/i.test(navigator.userAgent)) {
+        console.log("Mobile detected, using sample data");
+        processAlertData(sampleAlerts);
+        updateTimestamp();
+      } else {
+        // On desktop, try the API first
+        fetchAlerts();
+      }
       
       // Set up refresh interval
       setInterval(fetchAlerts, refreshInterval);
@@ -501,63 +497,57 @@
     
     // Fetch alerts from NOAA
     function fetchAlerts() {
+      // Skip API call completely on mobile and just use sample data
+      if (/Mobi|Android/i.test(navigator.userAgent)) {
+        console.log("Mobile detected, bypassing API call");
+        processAlertData(sampleAlerts);
+        updateTimestamp();
+        return;
+      }
+      
       document.getElementById('status').textContent = 'Loading...';
       document.getElementById('status-details').textContent = 'Checking NOAA space weather alerts...';
       
-      // Set a timeout to ensure we don't wait too long on mobile
-      const timeoutPromise = new Promise((resolve) => {
-        setTimeout(() => {
-          console.log('Request timed out, using sample data');
-          resolve(sampleAlerts);
-        }, 5000); // 5 second timeout for mobile users
-      });
+      // Set a timeout for fallback
+      const timeoutId = setTimeout(() => {
+        console.log('Request timed out, using sample data');
+        processAlertData(sampleAlerts);
+        updateTimestamp();
+      }, 3000); // 3 second timeout
       
-      // Data fetch promise
-      const fetchPromise = new Promise((resolve) => {
-        // Try an alternative CORS proxy that might work better on mobile
-        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(NOAA_API_URL)}`;
-        
-        fetch(proxyUrl)
-          .then(response => {
-            if (!response.ok) {
-              throw new Error('Proxy fetch failed');
-            }
-            return response.json();
-          })
-          .then(data => {
-            resolve(data);
-          })
-          .catch(error => {
-            console.warn('Error fetching from API, using sample data:', error);
-            // If API fetch fails, use the sample data
-            resolve(sampleAlerts);
-          });
-      });
-      
-      // Race the fetch against the timeout
-      Promise.race([fetchPromise, timeoutPromise])
+      // Try fetching directly first (works on desktop)
+      fetch(NOAA_API_URL)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('Direct fetch failed');
+          }
+          return response.json();
+        })
         .then(data => {
-          // Find most recent K-index alert
-          const kIndexAlerts = data.filter(alert => 
-            alert.message && 
-            (alert.message.includes('K-index of 6') || 
-             alert.message.includes('K-index of 7') || 
-             alert.message.includes('K-index of 8') || 
-             alert.message.includes('K-index of 9'))
-          );
-          
-          // Process the data and update the UI
-          processAlertData(kIndexAlerts);
+          clearTimeout(timeoutId); // Clear the timeout
+          processAlertData(data);
+          updateTimestamp();
         })
         .catch(error => {
-          console.error('Error processing alert data:', error);
-          // Fallback to NO status if we can't determine anything else
-          document.body.setAttribute('data-error', 'true');
-          document.getElementById('status').textContent = 'NO';
-          document.getElementById('status-details').textContent = 'Data unavailable. Assuming no current storm.';
-        })
-        .finally(() => {
-          updateTimestamp();
+          console.warn('Error fetching from API directly:', error);
+          
+          // Try with a CORS proxy as backup
+          fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(NOAA_API_URL)}`)
+            .then(response => {
+              if (!response.ok) {
+                throw new Error('Proxy fetch failed');
+              }
+              return response.json();
+            })
+            .then(data => {
+              clearTimeout(timeoutId); // Clear the timeout
+              processAlertData(data);
+              updateTimestamp();
+            })
+            .catch(error => {
+              console.warn('All fetch attempts failed, using sample data:', error);
+              // The timeout will handle showing sample data
+            });
         });
     }
     
@@ -574,13 +564,13 @@
       if (strongStorms.length > 0) {
         // Sort by issue time
         strongStorms.sort((a, b) => {
-          const timeA = new Date(a.issueTime || a.messageIssueTime);
-          const timeB = new Date(b.issueTime || b.messageIssueTime);
+          const timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
+          const timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
           return timeB - timeA; // Most recent first
         });
         
         const lastStorm = strongStorms[0];
-        const stormDate = new Date(lastStorm.issueTime || lastStorm.messageIssueTime);
+        const stormDate = new Date(lastStorm.issueTime || lastStorm.messageIssueTime || Date.now());
         const kpValue = lastStorm.message.includes('K-index of 7') ? 7 : 
                       lastStorm.message.includes('K-index of 8') ? 8 : 9;
         
@@ -589,16 +579,16 @@
       }
       
       // Find most recent alert (if any)
-      if (alerts.length > 0) {
+      if (alerts && alerts.length > 0) {
         // Sort by issue time
         alerts.sort((a, b) => {
-          const timeA = new Date(a.issueTime || a.messageIssueTime);
-          const timeB = new Date(b.issueTime || b.messageIssueTime);
+          const timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
+          const timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
           return timeB - timeA; // Most recent first
         });
         
         const latestAlert = alerts[0];
-        const alertTime = new Date(latestAlert.issueTime || latestAlert.messageIssueTime);
+        const alertTime = new Date(latestAlert.issueTime || latestAlert.messageIssueTime || Date.now());
         const now = new Date();
         
         // Check if alert is recent (within 24 hours)
