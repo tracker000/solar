@@ -540,7 +540,7 @@
         console.log('Request timed out, using sample data');
         processAlertData(sampleAlerts);
         updateTimestamp();
-      }, 5000); // 5 second timeout
+      }, 2000); // 2 second timeout
       
       // Try fetching directly first (works on desktop)
       fetch(NOAA_API_URL)
@@ -964,7 +964,7 @@
         console.log('Request timed out, using sample data');
         processAlertData(sampleAlerts);
         updateTimestamp();
-      }, 5000); // 5 second timeout
+      }, 2000); // 2 second timeout
       
       // Try with fetch API if supported
       if (window.fetch) {
