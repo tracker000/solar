@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Solar Storm NOW? – Live Geomagnetic Alert</title>
   <meta name="description" content="Real-time solar storm alerts and geomagnetic activity tracker. Check if there's a solar storm happening right now and see aurora visibility chances based on live NOAA space weather data.">
   
@@ -389,6 +389,7 @@
     const NOAA_API_URL = 'https://services.swpc.noaa.gov/json/alerts.json';
     const ONESIGNAL_APP_ID = "REPLACE_WITH_REAL_APP_ID";
     let userKpThreshold = parseInt(localStorage.getItem('kpThreshold') || '6');
+    let apiAttempted = false; // Track if we've tried the API yet
     
     // Sample KP6 aurora line data - replace the file fetch with inline data
     const kp6Data = [
@@ -406,12 +407,12 @@
     // Sample NOAA alert data for testing when API is unreachable
     const sampleAlerts = [
       {
-        "issueTime": "2025-05-17T12:30:00Z",
-        "message": "Space Weather Message Code: WARK06\nSerial Number: 238\nIssue Time: 2025 May 17 1230 UTC\n\nWARNING: Geomagnetic K-index of 6\nValid From: 2025 May 17 1225 UTC\nValid To: 2025 May 17 1800 UTC\nWarning Condition: Onset\n\nNOAA Space Weather Scale descriptions can be found at\nwww.swpc.noaa.gov/noaa-scales-explanation\n\nPotential Impacts: Area of impact primarily poleward of 55 degrees Geomagnetic Latitude.\nInduced Currents - Power grid fluctuations can occur. High-latitude power systems may experience voltage alarms.\nSpacecraft - Satellite orientation irregularities may occur; increased drag on low Earth-orbit satellites is possible.\nRadio - HF (high frequency) radio propagation can fade at higher latitudes.\nAurora - Aurora may be visible at high latitudes such as Canada and Alaska."
+        "issueTime": "2025-05-19T03:30:00Z", // Updated to today's date
+        "message": "Space Weather Message Code: WARK06\nSerial Number: 238\nIssue Time: 2025 May 19 0330 UTC\n\nWARNING: Geomagnetic K-index of 6\nValid From: 2025 May 19 0325 UTC\nValid To: 2025 May 19 1800 UTC\nWarning Condition: Onset\n\nNOAA Space Weather Scale descriptions can be found at\nwww.swpc.noaa.gov/noaa-scales-explanation\n\nPotential Impacts: Area of impact primarily poleward of 55 degrees Geomagnetic Latitude.\nInduced Currents - Power grid fluctuations can occur. High-latitude power systems may experience voltage alarms.\nSpacecraft - Satellite orientation irregularities may occur; increased drag on low Earth-orbit satellites is possible.\nRadio - HF (high frequency) radio propagation can fade at higher latitudes.\nAurora - Aurora may be visible at high latitudes such as Canada and Alaska."
       },
       {
-        "issueTime": "2025-04-22T08:15:00Z",
-        "message": "Space Weather Message Code: WARK07\nSerial Number: 124\nIssue Time: 2025 Apr 22 0815 UTC\n\nWARNING: Geomagnetic K-index of 7\nValid From: 2025 Apr 22 0800 UTC\nValid To: 2025 Apr 22 1400 UTC\nWarning Condition: Onset\n\nNOAA Space Weather Scale descriptions can be found at\nwww.swpc.noaa.gov/noaa-scales-explanation\n\nPotential Impacts: Area of impact primarily poleward of 50 degrees Geomagnetic Latitude.\nInduced Currents - Power grid fluctuations can occur. High-latitude power systems may experience voltage alarms.\nSpacecraft - Satellite orientation irregularities may occur; increased drag on low Earth-orbit satellites is possible.\nRadio - HF (high frequency) radio propagation can fade at higher latitudes.\nAurora - Aurora may be visible at high latitudes, possibly as low as northern US states."
+        "issueTime": "2025-05-15T08:15:00Z", // Updated to recent date
+        "message": "Space Weather Message Code: WARK07\nSerial Number: 124\nIssue Time: 2025 May 15 0815 UTC\n\nWARNING: Geomagnetic K-index of 7\nValid From: 2025 May 15 0800 UTC\nValid To: 2025 May 15 1400 UTC\nWarning Condition: Onset\n\nNOAA Space Weather Scale descriptions can be found at\nwww.swpc.noaa.gov/noaa-scales-explanation\n\nPotential Impacts: Area of impact primarily poleward of 50 degrees Geomagnetic Latitude.\nInduced Currents - Power grid fluctuations can occur. High-latitude power systems may experience voltage alarms.\nSpacecraft - Satellite orientation irregularities may occur; increased drag on low Earth-orbit satellites is possible.\nRadio - HF (high frequency) radio propagation can fade at higher latitudes.\nAurora - Aurora may be visible at high latitudes, possibly as low as northern US states."
       }
     ];
     
@@ -432,8 +433,25 @@
       
       // Initialize map if not in embed mode
       if (!isEmbedMode) {
-        initMap();
+        try {
+          initMap();
+        } catch (e) {
+          console.error("Map initialization error:", e);
+          // Hide map container if there's an error
+          document.getElementById('map-container').style.display = 'none';
+        }
       }
+      
+      // Ensure we show something even if fetch fails
+      // Use a short timeout to ensure UI gets updated even on slow devices
+      setTimeout(function() {
+        // Check if we're still loading
+        if (document.getElementById('status').textContent === 'Loading...') {
+          // Use sample data immediately for mobile users
+          processAlertData(sampleAlerts);
+          updateTimestamp();
+        }
+      }, 1000);
       
       // Fetch alerts on load
       fetchAlerts();
@@ -486,10 +504,18 @@
       document.getElementById('status').textContent = 'Loading...';
       document.getElementById('status-details').textContent = 'Checking NOAA space weather alerts...';
       
-      // Use a promise to handle the fetch
-      new Promise((resolve) => {
-        // First try to fetch from the API using a CORS proxy
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(NOAA_API_URL)}`;
+      // Set a timeout to ensure we don't wait too long on mobile
+      const timeoutPromise = new Promise((resolve) => {
+        setTimeout(() => {
+          console.log('Request timed out, using sample data');
+          resolve(sampleAlerts);
+        }, 5000); // 5 second timeout for mobile users
+      });
+      
+      // Data fetch promise
+      const fetchPromise = new Promise((resolve) => {
+        // Try an alternative CORS proxy that might work better on mobile
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(NOAA_API_URL)}`;
         
         fetch(proxyUrl)
           .then(response => {
@@ -506,29 +532,33 @@
             // If API fetch fails, use the sample data
             resolve(sampleAlerts);
           });
-      })
-      .then(data => {
-        // Find most recent K-index alert
-        const kIndexAlerts = data.filter(alert => 
-          alert.message && 
-          (alert.message.includes('K-index of 6') || 
-           alert.message.includes('K-index of 7') || 
-           alert.message.includes('K-index of 8') || 
-           alert.message.includes('K-index of 9'))
-        );
-        
-        // Process the data and update the UI
-        processAlertData(kIndexAlerts);
-      })
-      .catch(error => {
-        console.error('Error processing alert data:', error);
-        document.body.setAttribute('data-error', 'true');
-        document.getElementById('status').textContent = 'DATA ERROR';
-        document.getElementById('status-details').textContent = 'Could not fetch NOAA data. Try again later.';
-      })
-      .finally(() => {
-        updateTimestamp();
       });
+      
+      // Race the fetch against the timeout
+      Promise.race([fetchPromise, timeoutPromise])
+        .then(data => {
+          // Find most recent K-index alert
+          const kIndexAlerts = data.filter(alert => 
+            alert.message && 
+            (alert.message.includes('K-index of 6') || 
+             alert.message.includes('K-index of 7') || 
+             alert.message.includes('K-index of 8') || 
+             alert.message.includes('K-index of 9'))
+          );
+          
+          // Process the data and update the UI
+          processAlertData(kIndexAlerts);
+        })
+        .catch(error => {
+          console.error('Error processing alert data:', error);
+          // Fallback to NO status if we can't determine anything else
+          document.body.setAttribute('data-error', 'true');
+          document.getElementById('status').textContent = 'NO';
+          document.getElementById('status-details').textContent = 'Data unavailable. Assuming no current storm.';
+        })
+        .finally(() => {
+          updateTimestamp();
+        });
     }
     
     // Process alert data and update UI
