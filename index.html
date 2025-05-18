@@ -436,7 +436,7 @@
       document.body.classList.add('embed-mode');
     }
     
-    // Initialize on document load
+          // Initialize on document load
     document.addEventListener('DOMContentLoaded', function() {
       // Set up KP threshold from localStorage
       document.getElementById('kp-threshold').value = userKpThreshold;
@@ -459,15 +459,8 @@
         }
       }
       
-      // Use sample data immediately if on mobile
-      if (/Mobi|Android/i.test(navigator.userAgent)) {
-        console.log("Mobile detected, using sample data");
-        processAlertData(sampleAlerts);
-        updateTimestamp();
-      } else {
-        // On desktop, try the API first
-        fetchAlerts();
-      }
+      // Always fetch from the real API, regardless of device type
+      fetchAlerts();
       
       // Set up refresh interval
       setInterval(fetchAlerts, refreshInterval);
@@ -535,13 +528,8 @@
     
     // Fetch alerts from NOAA
     function fetchAlerts() {
-      // Skip API call completely on mobile and just use sample data
-      if (/Mobi|Android/i.test(navigator.userAgent)) {
-        console.log("Mobile detected, bypassing API call");
-        processAlertData(sampleAlerts);
-        updateTimestamp();
-        return;
-      }
+      // Use real API for all devices including mobile
+      // Removed mobile device detection that was using sample data
       
       document.getElementById('status').textContent = 'Loading...';
       document.getElementById('status-details').textContent = 'Checking NOAA space weather alerts...';
@@ -964,13 +952,8 @@
     
     // Fetch alerts from NOAA
     function fetchAlerts() {
-      // Skip API call completely on mobile and just use sample data
-      if (/Mobi|Android/i.test(navigator.userAgent)) {
-        console.log("Mobile detected, bypassing API call");
-        processAlertData(sampleAlerts);
-        updateTimestamp();
-        return;
-      }
+      // Use real API for all devices including mobile
+      // Removed mobile device detection that was using sample data
       
       document.getElementById('status').textContent = 'Loading...';
       document.getElementById('status-details').textContent = 'Checking NOAA space weather alerts...';
