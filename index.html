@@ -394,18 +394,15 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   
   <!-- Main JS -->
-  <script type="module">
+  <script>
     // Global variables
     let map;
     let auroraLayer;
     let lastCheck = 0;
     let refreshInterval = 30 * 60 * 1000; // 30 minutes
     const NOAA_API_URL = 'https://services.swpc.noaa.gov/json/alerts.json';
-    const ONESIGNAL_APP_ID = "YOUR_ONESIGNAL_APP_ID"; // Replace with your actual app ID
-    let userKpThreshold = parseInt(localStorage.getItem('kpThreshold') || '6');
-    let apiAttempted = false; // Track if we've tried the API yet
     
-    // Sample KP6 aurora line data - replace the file fetch with inline data
+    // Aurora line coordinates for Kp6
     const kp6Data = [
       [74, -168], [74, -160], [74, -152], [73, -144], [73, -136], 
       [72, -128], [71, -120], [70, -112], [69, -104], [68, -96], 
@@ -418,31 +415,34 @@
       [73, 152], [73, 160], [74, 168], [74, 176], [74, -176]
     ];
     
-    // Sample NOAA alert data for testing when API is unreachable
-    const sampleAlerts = [
-      {
-        "issueTime": "2025-05-19T03:30:00Z", // Updated to today's date
-        "message": "Space Weather Message Code: WARK06\nSerial Number: 238\nIssue Time: 2025 May 19 0330 UTC\n\nWARNING: Geomagnetic K-index of 6\nValid From: 2025 May 19 0325 UTC\nValid To: 2025 May 19 1800 UTC\nWarning Condition: Onset\n\nNOAA Space Weather Scale descriptions can be found at\nwww.swpc.noaa.gov/noaa-scales-explanation\n\nPotential Impacts: Area of impact primarily poleward of 55 degrees Geomagnetic Latitude.\nInduced Currents - Power grid fluctuations can occur. High-latitude power systems may experience voltage alarms.\nSpacecraft - Satellite orientation irregularities may occur; increased drag on low Earth-orbit satellites is possible.\nRadio - HF (high frequency) radio propagation can fade at higher latitudes.\nAurora - Aurora may be visible at high latitudes such as Canada and Alaska."
-      },
-      {
-        "issueTime": "2025-05-15T08:15:00Z", // Updated to recent date
-        "message": "Space Weather Message Code: WARK07\nSerial Number: 124\nIssue Time: 2025 May 15 0815 UTC\n\nWARNING: Geomagnetic K-index of 7\nValid From: 2025 May 15 0800 UTC\nValid To: 2025 May 15 1400 UTC\nWarning Condition: Onset\n\nNOAA Space Weather Scale descriptions can be found at\nwww.swpc.noaa.gov/noaa-scales-explanation\n\nPotential Impacts: Area of impact primarily poleward of 50 degrees Geomagnetic Latitude.\nInduced Currents - Power grid fluctuations can occur. High-latitude power systems may experience voltage alarms.\nSpacecraft - Satellite orientation irregularities may occur; increased drag on low Earth-orbit satellites is possible.\nRadio - HF (high frequency) radio propagation can fade at higher latitudes.\nAurora - Aurora may be visible at high latitudes, possibly as low as northern US states."
-      }
-    ];
-    
     // Check if we're in embed mode
-    const isEmbedMode = new URLSearchParams(window.location.search).get('embed') === '1';
+    const isEmbedMode = window.location.search.indexOf('embed=1') !== -1;
     if (isEmbedMode) {
       document.body.classList.add('embed-mode');
     }
     
-          // Initialize on document load
+    // User settings
+    let userKpThreshold = 6;
+    try {
+      const storedThreshold = localStorage.getItem('kpThreshold');
+      if (storedThreshold) {
+        userKpThreshold = parseInt(storedThreshold);
+      }
+    } catch (e) {
+      console.warn('localStorage not available');
+    }
+    
+    // Initialize on document load
     document.addEventListener('DOMContentLoaded', function() {
-      // Set up KP threshold from localStorage
+      // Set up KP threshold in UI
       document.getElementById('kp-threshold').value = userKpThreshold;
       document.getElementById('kp-threshold').addEventListener('change', function() {
         userKpThreshold = parseInt(this.value);
-        localStorage.setItem('kpThreshold', userKpThreshold);
+        try {
+          localStorage.setItem('kpThreshold', userKpThreshold);
+        } catch (e) {
+          console.warn('localStorage not available');
+        }
       });
       
       // Initialize map if not in embed mode
@@ -451,23 +451,30 @@
           initMap();
         } catch (e) {
           console.error("Map initialization error:", e);
-          // Hide map container if there's an error and show error message
           document.getElementById('map-container').style.display = 'none';
-          const errorMsg = document.getElementById('error-message');
-          errorMsg.textContent = "Unable to load map. Please try refreshing the page.";
-          errorMsg.style.display = 'block';
+          document.getElementById('error-message').textContent = 'Map initialization failed. Please refresh the page.';
+          document.getElementById('error-message').style.display = 'block';
         }
       }
       
-      // Always fetch from the real API, regardless of device type
-      fetchAlerts();
+      // Initially set status to NO (default state)
+      setDefaultState();
+      
+      // Then check real API status
+      fetchStormStatus();
       
       // Set up refresh interval
-      setInterval(fetchAlerts, refreshInterval);
-      
-      // Initialize push notifications
-      initPush();
+      setInterval(fetchStormStatus, refreshInterval);
     });
+    
+    // Set default "NO" state initially
+    function setDefaultState() {
+      document.body.setAttribute('data-status', 'no');
+      document.body.removeAttribute('data-error');
+      document.getElementById('status').textContent = 'NO';
+      document.getElementById('status-details').textContent = 'Quiet for now. Checking for updates...';
+      updateTimestamp();
+    }
     
     // Initialize map
     function initMap() {
@@ -479,10 +486,14 @@
         maxZoom: 10
       }).setView([50, 0], 2);
       
+      // Add base tile layer
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         noWrap: false
       }).addTo(map);
+      
+      // Add aurora line using the data
+      addAuroraLine();
       
       // Add locate button functionality
       document.getElementById('locate-btn').addEventListener('click', function() {
@@ -493,16 +504,13 @@
         }
       });
       
-      // Add aurora polyline using the inline data
-      addAuroraLine();
-      
       // Handle location errors
       map.on('locationerror', function(e) {
         alert("Location access denied or unavailable");
       });
     }
     
-    // Add aurora line using the predefined data
+    // Add aurora line to map
     function addAuroraLine() {
       try {
         // Clear old layer if exists
@@ -510,7 +518,7 @@
           map.removeLayer(auroraLayer);
         }
         
-        // Add new polyline using the inline data
+        // Add new polyline using the data
         auroraLayer = L.polyline(kp6Data, {
           color: "#ff9800", 
           weight: 2,
@@ -519,456 +527,16 @@
         }).addTo(map);
       } catch (error) {
         console.error('Error adding aurora line:', error);
-        // Show error message to user
-        const errorMsg = document.getElementById('error-message');
-        errorMsg.textContent = "Unable to display aurora line on map.";
-        errorMsg.style.display = 'block';
       }
     }
     
-    // Fetch alerts from NOAA
-    function fetchAlerts() {
-      // Use real API for all devices including mobile
-      // Removed mobile device detection that was using sample data
-      
-      document.getElementById('status').textContent = 'Loading...';
+    // Fetch real storm status from NOAA API
+    function fetchStormStatus() {
       document.getElementById('status-details').textContent = 'Checking NOAA space weather alerts...';
-      document.getElementById('error-message').style.display = 'none';
-      
-      // Set a timeout for fallback - increased to 5 seconds for slower connections
-      const timeoutId = setTimeout(() => {
-        console.log('Request timed out, using sample data');
-        processAlertData(sampleAlerts);
-        updateTimestamp();
-      }, 2000); // 2 second timeout
-      
-      // Try fetching directly first (works on desktop)
-      fetch(NOAA_API_URL)
-        .then(response => {
-          if (!response.ok) {
-            throw new Error('Direct fetch failed: ' + response.status);
-          }
-          return response.json();
-        })
-        .then(data => {
-          clearTimeout(timeoutId); // Clear the timeout
-          processAlertData(data);
-          updateTimestamp();
-        })
-        .catch(error => {
-          console.warn('Error fetching from API directly:', error);
-          
-          // Try with a CORS proxy as backup
-          fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(NOAA_API_URL)}`)
-            .then(response => {
-              if (!response.ok) {
-                throw new Error('Proxy fetch failed: ' + response.status);
-              }
-              return response.json();
-            })
-            .then(data => {
-              clearTimeout(timeoutId); // Clear the timeout
-              processAlertData(data);
-              updateTimestamp();
-            })
-            .catch(error => {
-              console.warn('All fetch attempts failed, using sample data:', error);
-              // The timeout will handle showing sample data
-            });
-        });
-    }
-    
-    // Process alert data and update UI
-    function processAlertData(alerts) {
-      if (!alerts || !Array.isArray(alerts)) {
-        console.error('Invalid alert data received:', alerts);
-        document.getElementById('error-message').textContent = 'Error processing data from NOAA. Using backup data.';
-        document.getElementById('error-message').style.display = 'block';
-        alerts = sampleAlerts;
-      }
-      
-      // Find strongest storm for "last major" display
-      const strongStorms = alerts.filter(alert => {
-        if (!alert || !alert.message) return false;
-        return alert.message.includes('K-index of 7') || 
-               alert.message.includes('K-index of 8') || 
-               alert.message.includes('K-index of 9');
-      });
-      
-      if (strongStorms.length > 0) {
-        // Sort by issue time
-        strongStorms.sort((a, b) => {
-          const timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
-          const timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
-          return timeB - timeA; // Most recent first
-        });
-        
-        const lastStorm = strongStorms[0];
-        const stormDate = new Date(lastStorm.issueTime || lastStorm.messageIssueTime || Date.now());
-        
-        let kpValue = 7;
-        if (lastStorm.message.includes('K-index of 9')) {
-          kpValue = 9;
-        } else if (lastStorm.message.includes('K-index of 8')) {
-          kpValue = 8;
-        }
-        
-        document.getElementById('last-major').textContent = 
-          `Last strong storm: ${stormDate.toISOString().split('T')[0]} (Kp ${kpValue})`;
-      }
-      
-      // Find most recent alert (if any)
-      if (alerts && alerts.length > 0) {
-        // Sort by issue time
-        alerts.sort((a, b) => {
-          if (!a || !b) return 0;
-          const timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
-          const timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
-          return timeB - timeA; // Most recent first
-        });
-        
-        const latestAlert = alerts[0];
-        if (latestAlert && latestAlert.message) {
-          const alertTime = new Date(latestAlert.issueTime || latestAlert.messageIssueTime || Date.now());
-          const now = new Date();
-          
-          // Check if alert is recent (within 24 hours)
-          if ((now - alertTime) < 24 * 60 * 60 * 1000) {
-            // Extract Kp value
-            let kpValue = 6; // Default
-            if (latestAlert.message.includes('K-index of 9')) kpValue = 9;
-            else if (latestAlert.message.includes('K-index of 8')) kpValue = 8; 
-            else if (latestAlert.message.includes('K-index of 7')) kpValue = 7;
-            
-            renderStatus(true, kpValue);
-            
-            // Send notification if needed
-            if (kpValue >= userKpThreshold) {
-              sendStormNotification(kpValue);
-            }
-            
-            return;
-          }
-        }
-      }
-      
-      // No recent alerts found
-      renderStatus(false);
-    }
-    
-    // Render status to page
-    function renderStatus(isActive, kpValue) {
-      if (isActive) {
-        document.body.setAttribute('data-status', 'yes');
-        document.body.removeAttribute('data-error');
-        document.getElementById('status').textContent = 'YES';
-        document.getElementById('status-details').textContent = 
-          `Kp ${kpValue} • High aurora chance – look north!`;
-      } else {
-        document.body.setAttribute('data-status', 'no');
-        document.body.removeAttribute('data-error');
-        document.getElementById('status').textContent = 'NO';
-        document.getElementById('status-details').textContent = 
-          'Quiet for now. Check back later.';
-      }
-    }
-    
-    // Update timestamp
-    function updateTimestamp() {
-      const now = new Date();
-      document.getElementById('timestamp').textContent = 
-        `Last updated: ${now.toISOString().replace('T', ' ').substring(0, 16)} UTC`;
-      lastCheck = now.getTime();
-    }
-    
-    // Initialize push notifications
-    function initPush() {
-      // Only load OneSignal if we have a valid App ID
-      if (ONESIGNAL_APP_ID && ONESIGNAL_APP_ID !== "YOUR_ONESIGNAL_APP_ID") {
-        // Dynamically load OneSignal SDK
-        const script = document.createElement('script');
-        script.src = 'https://cdn.onesignal.com/sdks/OneSignalSDK.js';
-        script.async = true;
-        script.onload = function() {
-          if (window.OneSignal) {
-            window.OneSignal.init({
-              appId: ONESIGNAL_APP_ID,
-              notifyButton: {
-                enable: false,
-              },
-              allowLocalization: true,
-              promptOptions: {
-                slidedown: {
-                  prompts: [
-                    {
-                      type: "push",
-                      autoPrompt: false,
-                      text: {
-                        actionMessage: "Would you like to receive solar storm alerts?",
-                        acceptButton: "Allow",
-                        cancelButton: "No Thanks",
-                      }
-                    }
-                  ]
-                }
-              }
-            });
-            
-            // Ask for notification permission on first load
-            const hasPrompted = localStorage.getItem('notificationPrompted');
-            if (!hasPrompted) {
-              setTimeout(() => {
-                window.OneSignal.showNativePrompt();
-                localStorage.setItem('notificationPrompted', 'true');
-              }, 3000);
-            }
-          }
-        };
-        document.head.appendChild(script);
-      }
-    }
-    
-    // Send notification
-    function sendStormNotification(kpValue) {
-      if (window.OneSignal && typeof OneSignal.isPushNotificationsEnabled === 'function' && OneSignal.isPushNotificationsEnabled()) {
-        OneSignal.sendSelfNotification(
-          "Solar Storm Alert!", // Title
-          `Geomagnetic storm (Kp ${kpValue}) in progress. Aurora may be visible.`, // Message
-          window.location.href, // URL
-          '/favicon.ico', // Icon
-          {
-            kpValue: kpValue,
-            timestamp: new Date().toISOString()
-          } // Data
-        );
-      }
-    }
-  </script>
-  
-  <!-- Legacy browser support -->
-  <script nomodule>
-    // Polyfills for older browsers
-    if (!String.prototype.includes) {
-      String.prototype.includes = function(search, start) {
-        'use strict';
-        if (typeof start !== 'number') {
-          start = 0;
-        }
-        
-        if (start + search.length > this.length) {
-          return false;
-        } else {
-          return this.indexOf(search, start) !== -1;
-        }
-      };
-    }
-    
-    if (!Array.prototype.includes) {
-      Array.prototype.includes = function(searchElement, fromIndex) {
-        if (this == null) {
-          throw new TypeError('"this" is null or not defined');
-        }
-        
-        var o = Object(this);
-        var len = o.length >>> 0;
-        
-        if (len === 0) {
-          return false;
-        }
-        
-        var n = fromIndex | 0;
-        var k = Math.max(n >= 0 ? n : len + n, 0);
-        
-        while (k < len) {
-          if (o[k] === searchElement) {
-            return true;
-          }
-          k++;
-        }
-        
-        return false;
-      };
-    }
-    
-    if (!Date.prototype.toISOString) {
-      (function() {
-        function pad(number) {
-          if (number < 10) {
-            return '0' + number;
-          }
-          return number;
-        }
-        
-        Date.prototype.toISOString = function() {
-          return this.getUTCFullYear() +
-            '-' + pad(this.getUTCMonth() + 1) +
-            '-' + pad(this.getUTCDate()) +
-            'T' + pad(this.getUTCHours()) +
-            ':' + pad(this.getUTCMinutes()) +
-            ':' + pad(this.getUTCSeconds()) +
-            '.' + (this.getUTCMilliseconds() / 1000).toFixed(3).slice(2, 5) +
-            'Z';
-        };
-      }());
-    }
-    
-    // Global variables
-    var map;
-    var auroraLayer;
-    var lastCheck = 0;
-    var refreshInterval = 30 * 60 * 1000; // 30 minutes
-    var NOAA_API_URL = 'https://services.swpc.noaa.gov/json/alerts.json';
-    var ONESIGNAL_APP_ID = "YOUR_ONESIGNAL_APP_ID"; // Replace with your actual app ID
-    var userKpThreshold = parseInt(localStorage.getItem('kpThreshold') || '6');
-    var apiAttempted = false; // Track if we've tried the API yet
-    
-    // Sample KP6 aurora line data
-    var kp6Data = [
-      [74, -168], [74, -160], [74, -152], [73, -144], [73, -136], 
-      [72, -128], [71, -120], [70, -112], [69, -104], [68, -96], 
-      [67, -88], [66, -80], [65, -72], [65, -64], [64, -56], 
-      [64, -48], [64, -40], [64, -32], [64, -24], [64, -16], 
-      [64, -8], [64, 0], [64, 8], [64, 16], [64, 24], 
-      [65, 32], [65, 40], [65, 48], [66, 56], [66, 64], 
-      [67, 72], [67, 80], [68, 88], [68, 96], [69, 104], 
-      [70, 112], [70, 120], [71, 128], [72, 136], [72, 144], 
-      [73, 152], [73, 160], [74, 168], [74, 176], [74, -176]
-    ];
-    
-    // Sample NOAA alert data for testing when API is unreachable
-    var sampleAlerts = [
-      {
-        "issueTime": "2025-05-19T03:30:00Z", // Updated to today's date
-        "message": "Space Weather Message Code: WARK06\nSerial Number: 238\nIssue Time: 2025 May 19 0330 UTC\n\nWARNING: Geomagnetic K-index of 6\nValid From: 2025 May 19 0325 UTC\nValid To: 2025 May 19 1800 UTC\nWarning Condition: Onset\n\nNOAA Space Weather Scale descriptions can be found at\nwww.swpc.noaa.gov/noaa-scales-explanation\n\nPotential Impacts: Area of impact primarily poleward of 55 degrees Geomagnetic Latitude.\nInduced Currents - Power grid fluctuations can occur. High-latitude power systems may experience voltage alarms.\nSpacecraft - Satellite orientation irregularities may occur; increased drag on low Earth-orbit satellites is possible.\nRadio - HF (high frequency) radio propagation can fade at higher latitudes.\nAurora - Aurora may be visible at high latitudes such as Canada and Alaska."
-      },
-      {
-        "issueTime": "2025-05-15T08:15:00Z", // Updated to recent date
-        "message": "Space Weather Message Code: WARK07\nSerial Number: 124\nIssue Time: 2025 May 15 0815 UTC\n\nWARNING: Geomagnetic K-index of 7\nValid From: 2025 May 15 0800 UTC\nValid To: 2025 May 15 1400 UTC\nWarning Condition: Onset\n\nNOAA Space Weather Scale descriptions can be found at\nwww.swpc.noaa.gov/noaa-scales-explanation\n\nPotential Impacts: Area of impact primarily poleward of 50 degrees Geomagnetic Latitude.\nInduced Currents - Power grid fluctuations can occur. High-latitude power systems may experience voltage alarms.\nSpacecraft - Satellite orientation irregularities may occur; increased drag on low Earth-orbit satellites is possible.\nRadio - HF (high frequency) radio propagation can fade at higher latitudes.\nAurora - Aurora may be visible at high latitudes, possibly as low as northern US states."
-      }
-    ];
-    
-    // Check if we're in embed mode
-    var isEmbedMode = new URLSearchParams(window.location.search).get('embed') === '1';
-    if (isEmbedMode) {
-      document.body.classList.add('embed-mode');
-    }
-    
-    // Initialize on document load
-    document.addEventListener('DOMContentLoaded', function() {
-      // Set up KP threshold from localStorage
-      document.getElementById('kp-threshold').value = userKpThreshold;
-      document.getElementById('kp-threshold').addEventListener('change', function() {
-        userKpThreshold = parseInt(this.value);
-        localStorage.setItem('kpThreshold', userKpThreshold);
-      });
-      
-      // Initialize map if not in embed mode
-      if (!isEmbedMode) {
-        try {
-          initMap();
-        } catch (e) {
-          console.error("Map initialization error:", e);
-          // Hide map container if there's an error and show error message
-          document.getElementById('map-container').style.display = 'none';
-          var errorMsg = document.getElementById('error-message');
-          errorMsg.textContent = "Unable to load map. Please try refreshing the page.";
-          errorMsg.style.display = 'block';
-        }
-      }
-      
-      // Use sample data immediately if on mobile
-      if (/Mobi|Android/i.test(navigator.userAgent)) {
-        console.log("Mobile detected, using sample data");
-        processAlertData(sampleAlerts);
-        updateTimestamp();
-      } else {
-        // On desktop, try the API first
-        fetchAlerts();
-      }
-      
-      // Set up refresh interval
-      setInterval(fetchAlerts, refreshInterval);
-      
-      // Initialize push notifications
-      initPush();
-    });
-    
-    // Initialize map
-    function initMap() {
-      // Create map with appropriate attributes
-      map = L.map('map', {
-        attributionControl: true,
-        zoomControl: true,
-        minZoom: 2,
-        maxZoom: 10
-      }).setView([50, 0], 2);
-      
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        noWrap: false
-      }).addTo(map);
-      
-      // Add locate button functionality
-      document.getElementById('locate-btn').addEventListener('click', function() {
-        if (navigator.geolocation) {
-          map.locate({setView: true, maxZoom: 5});
-        } else {
-          alert("Geolocation is not supported by your browser");
-        }
-      });
-      
-      // Add aurora polyline using the inline data
-      addAuroraLine();
-      
-      // Handle location errors
-      map.on('locationerror', function(e) {
-        alert("Location access denied or unavailable");
-      });
-    }
-    
-    // Add aurora line using the predefined data
-    function addAuroraLine() {
-      try {
-        // Clear old layer if exists
-        if (auroraLayer) {
-          map.removeLayer(auroraLayer);
-        }
-        
-        // Add new polyline using the inline data
-        auroraLayer = L.polyline(kp6Data, {
-          color: "#ff9800", 
-          weight: 2,
-          opacity: 0.8,
-          className: "aurora-line"
-        }).addTo(map);
-      } catch (error) {
-        console.error('Error adding aurora line:', error);
-        // Show error message to user
-        var errorMsg = document.getElementById('error-message');
-        errorMsg.textContent = "Unable to display aurora line on map.";
-        errorMsg.style.display = 'block';
-      }
-    }
-    
-    // Fetch alerts from NOAA
-    function fetchAlerts() {
-      // Use real API for all devices including mobile
-      // Removed mobile device detection that was using sample data
-      
-      document.getElementById('status').textContent = 'Loading...';
-      document.getElementById('status-details').textContent = 'Checking NOAA space weather alerts...';
-      document.getElementById('error-message').style.display = 'none';
-      
-      // Set a timeout for fallback - increased to 5 seconds for slower connections
-      var timeoutId = setTimeout(function() {
-        console.log('Request timed out, using sample data');
-        processAlertData(sampleAlerts);
-        updateTimestamp();
-      }, 2000); // 2 second timeout
       
       // Try with fetch API if supported
       if (window.fetch) {
-        // Try fetching directly first (works on desktop)
+        // Try fetching directly
         fetch(NOAA_API_URL)
           .then(function(response) {
             if (!response.ok) {
@@ -977,9 +545,7 @@
             return response.json();
           })
           .then(function(data) {
-            clearTimeout(timeoutId); // Clear the timeout
             processAlertData(data);
-            updateTimestamp();
           })
           .catch(function(error) {
             console.warn('Error fetching from API directly:', error);
@@ -993,49 +559,57 @@
                 return response.json();
               })
               .then(function(data) {
-                clearTimeout(timeoutId); // Clear the timeout
                 processAlertData(data);
-                updateTimestamp();
               })
               .catch(function(error) {
-                console.warn('All fetch attempts failed, using sample data:', error);
-                // The timeout will handle showing sample data
+                console.error('All fetch attempts failed:', error);
+                // Keep the default "NO" state, but show an error tooltip
+                document.getElementById('error-message').textContent = 'Connection error: Unable to reach NOAA services. Using last known status.';
+                document.getElementById('error-message').style.display = 'block';
+                setTimeout(function() {
+                  document.getElementById('error-message').style.display = 'none';
+                }, 5000);
               });
           });
       } else {
-        // Fallback for browsers without fetch support - use XHR
+        // Fallback for browsers without fetch support
         var xhr = new XMLHttpRequest();
         xhr.open('GET', NOAA_API_URL, true);
         
         xhr.onload = function() {
           if (xhr.status >= 200 && xhr.status < 400) {
-            clearTimeout(timeoutId);
             var data = JSON.parse(xhr.responseText);
             processAlertData(data);
-            updateTimestamp();
           } else {
             console.warn('XHR request failed:', xhr.status);
-            // The timeout will handle showing sample data
+            // Keep default state and show error
+            document.getElementById('error-message').textContent = 'Connection error: Unable to reach NOAA services. Using last known status.';
+            document.getElementById('error-message').style.display = 'block';
+            setTimeout(function() {
+              document.getElementById('error-message').style.display = 'none';
+            }, 5000);
           }
         };
         
         xhr.onerror = function() {
           console.warn('XHR request failed');
-          // The timeout will handle showing sample data
+          // Keep default state and show error
+          document.getElementById('error-message').textContent = 'Connection error: Unable to reach NOAA services. Using last known status.';
+          document.getElementById('error-message').style.display = 'block';
+          setTimeout(function() {
+            document.getElementById('error-message').style.display = 'none';
+          }, 5000);
         };
         
         xhr.send();
       }
     }
     
-    // Process alert data and update UI
+    // Process alert data from NOAA API
     function processAlertData(alerts) {
       if (!alerts || !Array.isArray(alerts)) {
         console.error('Invalid alert data received:', alerts);
-        var errorMsg = document.getElementById('error-message');
-        errorMsg.textContent = 'Error processing data from NOAA. Using backup data.';
-        errorMsg.style.display = 'block';
-        alerts = sampleAlerts;
+        return;
       }
       
       // Find strongest storm for "last major" display
@@ -1071,6 +645,8 @@
         
         document.getElementById('last-major').textContent = 
           'Last strong storm: ' + stormDate.toISOString().split('T')[0] + ' (Kp ' + kpValue + ')';
+      } else {
+        document.getElementById('last-major').textContent = 'No strong storms recorded recently';
       }
       
       // Find most recent alert (if any)
@@ -1096,109 +672,34 @@
             else if (latestAlert.message.indexOf('K-index of 8') !== -1) kpValue = 8; 
             else if (latestAlert.message.indexOf('K-index of 7') !== -1) kpValue = 7;
             
-            renderStatus(true, kpValue);
+            // Set YES status with Kp value
+            document.body.setAttribute('data-status', 'yes');
+            document.body.removeAttribute('data-error');
+            document.getElementById('status').textContent = 'YES';
+            document.getElementById('status-details').textContent = 
+              'Kp ' + kpValue + ' • High aurora chance – look north!';
             
-            // Send notification if needed
-            if (kpValue >= userKpThreshold) {
-              sendStormNotification(kpValue);
-            }
-            
+            updateTimestamp();
             return;
           }
         }
       }
       
-      // No recent alerts found
-      renderStatus(false);
-    }
-    
-    // Render status to page
-    function renderStatus(isActive, kpValue) {
-      if (isActive) {
-        document.body.setAttribute('data-status', 'yes');
-        document.body.removeAttribute('data-error');
-        document.getElementById('status').textContent = 'YES';
-        document.getElementById('status-details').textContent = 
-          'Kp ' + kpValue + ' • High aurora chance – look north!';
-      } else {
-        document.body.setAttribute('data-status', 'no');
-        document.body.removeAttribute('data-error');
-        document.getElementById('status').textContent = 'NO';
-        document.getElementById('status-details').textContent = 
-          'Quiet for now. Check back later.';
-      }
+      // No recent alerts found - set/keep NO status
+      document.body.setAttribute('data-status', 'no');
+      document.body.removeAttribute('data-error');
+      document.getElementById('status').textContent = 'NO';
+      document.getElementById('status-details').textContent = 'Quiet for now. Check back later.';
+      updateTimestamp();
     }
     
     // Update timestamp
     function updateTimestamp() {
-      var now = new Date();
-      var isoString = now.toISOString();
-      document.getElementById('timestamp').textContent = 
-        'Last updated: ' + isoString.replace('T', ' ').substring(0, 16) + ' UTC';
+      const now = new Date();
+      let timeString = now.toISOString();
+      timeString = timeString.replace('T', ' ').substring(0, 16) + ' UTC';
+      document.getElementById('timestamp').textContent = 'Last updated: ' + timeString;
       lastCheck = now.getTime();
-    }
-    
-    // Initialize push notifications
-    function initPush() {
-      // Only load OneSignal if we have a valid App ID
-      if (ONESIGNAL_APP_ID && ONESIGNAL_APP_ID !== "YOUR_ONESIGNAL_APP_ID") {
-        // Dynamically load OneSignal SDK
-        var script = document.createElement('script');
-        script.src = 'https://cdn.onesignal.com/sdks/OneSignalSDK.js';
-        script.async = true;
-        script.onload = function() {
-          if (window.OneSignal) {
-            window.OneSignal.init({
-              appId: ONESIGNAL_APP_ID,
-              notifyButton: {
-                enable: false,
-              },
-              allowLocalization: true,
-              promptOptions: {
-                slidedown: {
-                  prompts: [
-                    {
-                      type: "push",
-                      autoPrompt: false,
-                      text: {
-                        actionMessage: "Would you like to receive solar storm alerts?",
-                        acceptButton: "Allow",
-                        cancelButton: "No Thanks"
-                      }
-                    }
-                  ]
-                }
-              }
-            });
-            
-            // Ask for notification permission on first load
-            var hasPrompted = localStorage.getItem('notificationPrompted');
-            if (!hasPrompted) {
-              setTimeout(function() {
-                window.OneSignal.showNativePrompt();
-                localStorage.setItem('notificationPrompted', 'true');
-              }, 3000);
-            }
-          }
-        };
-        document.head.appendChild(script);
-      }
-    }
-    
-    // Send notification
-    function sendStormNotification(kpValue) {
-      if (window.OneSignal && typeof OneSignal.isPushNotificationsEnabled === 'function' && OneSignal.isPushNotificationsEnabled()) {
-        OneSignal.sendSelfNotification(
-          "Solar Storm Alert!", // Title
-          "Geomagnetic storm (Kp " + kpValue + ") in progress. Aurora may be visible.", // Message
-          window.location.href, // URL
-          '/favicon.ico', // Icon
-          {
-            kpValue: kpValue,
-            timestamp: new Date().toISOString()
-          } // Data
-        );
-      }
     }
   </script>
 </body>
