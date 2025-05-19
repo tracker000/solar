@@ -4,44 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Solar Storm NOW? – Live Geomagnetic Alert</title>
-  <meta name="description" content="Real-time solar storm alerts and geomagnetic activity tracker. Check if there's a solar storm happening right now and see aurora visibility chances based on live NOAA space weather data.">
-  
-  <!-- Open Graph -->
-  <meta property="og:title" content="Solar Storm NOW? – Live Geomagnetic Alert">
-  <meta property="og:description" content="Real-time solar storm alerts and geomagnetic activity tracker. Check if there's a solar storm happening right now and see aurora visibility chances based on live NOAA space weather data.">
-  <meta property="og:type" content="website">
-  <meta property="og:image" content="https://solarstormnow.com/og.jpg">
+  <meta name="description" content="Real-time solar storm alerts and geomagnetic activity tracker. Check if there's a solar storm happening right now and see aurora visibility chances based on live space weather data.">
   
   <!-- Favicon -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='28' fill='%23ff9900'/></svg>">
-  
-  <!-- Meta -->
-  <meta name="language" content="English">
-  <meta name="theme-color" content="#111">
-  
-  <!-- JSON-LD Schema -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "Event",
-    "name": "Geomagnetic Storm Watch",
-    "description": "Live geomagnetic storm alert and aurora visibility tracker",
-    "startDate": "2025-05-18T00:00:00Z",
-    "endDate": "2025-05-19T00:00:00Z",
-    "url": "https://solarstormnow.com",
-    "eventStatus": "https://schema.org/EventScheduled",
-    "eventAttendanceMode": "https://schema.org/OnlineEventAttendanceMode",
-    "location": {
-      "@type": "VirtualLocation",
-      "url": "https://solarstormnow.com"
-    },
-    "organizer": {
-      "@type": "Organization",
-      "name": "SolarStormNow.com",
-      "url": "https://solarstormnow.com"
-    }
-  }
-  </script>
   
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
@@ -55,6 +21,9 @@
       --bg-color: #111;
       --text-color: #fff;
       --glow-color: rgba(0, 255, 180, 0.4);
+      --kp-low: #00e676;
+      --kp-medium: #ffeb3b;
+      --kp-high: #ff3333;
     }
     
     * {
@@ -323,13 +292,13 @@
   <div class="container">
     <header>
       <div>
-        <h1 title="Live NOAA feed refreshed every 30 min.">Solar Storm NOW? ❓</h1>
+        <h1 title="Live space weather updates">Solar Storm NOW? ❓</h1>
       </div>
     </header>
     
     <div id="status-container">
       <div id="status" aria-live="polite">Loading...</div>
-      <div id="status-details" aria-live="polite">Checking NOAA space weather alerts...</div>
+      <div id="status-details" aria-live="polite">Checking space weather alerts...</div>
       <div id="timestamp">Last updated: Loading...</div>
     </div>
     
@@ -356,7 +325,7 @@
     
     <details>
       <summary>Data & Privacy</summary>
-      <p>This site pulls data live from NOAA via HTTPS. No cookies are used, no personally identifiable information is stored, and all processing happens client-side in your browser. Our code is <a href="#" style="color: white;">open-source</a>.</p>
+      <p>This site pulls data from space weather services. No cookies are used, no personally identifiable information is stored, and all processing happens client-side in your browser.</p>
     </details>
     
     <div id="notification-settings">
@@ -367,11 +336,6 @@
         <option value="8">8</option>
         <option value="9">9</option>
       </select>
-    </div>
-    
-    <div class="ad-container">
-      <ins class="adsbygoogle" style="display:block;height:90px;text-align:center"
-           data-ad-client="ca-pub-YOUR_AD_CLIENT_ID" data-ad-slot="YOUR_AD_SLOT_ID"></ins>
     </div>
     
     <details>
@@ -400,7 +364,10 @@
     let auroraLayer;
     let lastCheck = 0;
     let refreshInterval = 30 * 60 * 1000; // 30 minutes
-    const NOAA_API_URL = 'https://services.swpc.noaa.gov/json/alerts.json';
+    
+    // NOAA API with reliable CORS proxy
+    const NOAA_API_URL = 'https://services.swpc.noaa.gov/products/alerts.json';
+    const PROXY_URL = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(NOAA_API_URL);
     
     // Aurora line coordinates for Kp6
     const kp6Data = [
@@ -452,19 +419,17 @@
         } catch (e) {
           console.error("Map initialization error:", e);
           document.getElementById('map-container').style.display = 'none';
-          document.getElementById('error-message').textContent = 'Map initialization failed. Please refresh the page.';
-          document.getElementById('error-message').style.display = 'block';
         }
       }
       
-      // Initially set status to NO (default state)
+      // Set initial status to NO as default state
       setDefaultState();
       
-      // Then check real API status
-      fetchStormStatus();
+      // Then check if there's a storm
+      checkStormStatus();
       
       // Set up refresh interval
-      setInterval(fetchStormStatus, refreshInterval);
+      setInterval(checkStormStatus, refreshInterval);
     });
     
     // Set default "NO" state initially
@@ -530,116 +495,74 @@
       }
     }
     
-    // Fetch real storm status from NOAA API
-    function fetchStormStatus() {
-      document.getElementById('status-details').textContent = 'Checking NOAA space weather alerts...';
+    // Fetch current space weather status using reliable proxy
+    function checkStormStatus() {
+      // Show loading text during check
+      document.getElementById('status-details').textContent = 'Checking space weather alerts...';
+      document.getElementById('error-message').style.display = 'none';
       
-      // Try with fetch API if supported
-      if (window.fetch) {
-        // Try fetching directly
-        fetch(NOAA_API_URL)
-          .then(function(response) {
-            if (!response.ok) {
-              throw new Error('Direct fetch failed: ' + response.status);
-            }
-            return response.json();
-          })
-          .then(function(data) {
-            processAlertData(data);
-          })
-          .catch(function(error) {
-            console.warn('Error fetching from API directly:', error);
+      fetch(PROXY_URL)
+        .then(response => response.text())
+        .then(text => {
+          try {
+            // Gelen metni logla (ilk 200 karakteri)
+            console.log("Proxy response (first 200 chars):", text.slice(0, 200));
             
-            // Try with a CORS proxy as backup
-            fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(NOAA_API_URL))
-              .then(function(response) {
-                if (!response.ok) {
-                  throw new Error('Proxy fetch failed: ' + response.status);
-                }
-                return response.json();
-              })
-              .then(function(data) {
-                processAlertData(data);
-              })
-              .catch(function(error) {
-                console.error('All fetch attempts failed:', error);
-                // Keep the default "NO" state, but show an error tooltip
-                document.getElementById('error-message').textContent = 'Connection error: Unable to reach NOAA services. Using last known status.';
-                document.getElementById('error-message').style.display = 'block';
-                setTimeout(function() {
-                  document.getElementById('error-message').style.display = 'none';
-                }, 5000);
-              });
-          });
-      } else {
-        // Fallback for browsers without fetch support
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', NOAA_API_URL, true);
-        
-        xhr.onload = function() {
-          if (xhr.status >= 200 && xhr.status < 400) {
-            var data = JSON.parse(xhr.responseText);
-            processAlertData(data);
-          } else {
-            console.warn('XHR request failed:', xhr.status);
-            // Keep default state and show error
-            document.getElementById('error-message').textContent = 'Connection error: Unable to reach NOAA services. Using last known status.';
-            document.getElementById('error-message').style.display = 'block';
-            setTimeout(function() {
-              document.getElementById('error-message').style.display = 'none';
-            }, 5000);
+            // JSON dönüşümünü dene
+            const json = JSON.parse(text);
+            
+            // Veri doğru formatta mı kontrol et
+            if (Array.isArray(json)) {
+              processAlertData(json);
+            } else {
+              throw new Error('Data is not an array');
+            }
+          } catch (e) {
+            console.error("Gelen veri JSON değil:", text.slice(0, 200));
+            
+            // Fallback to default state on error
+            document.body.setAttribute('data-status', 'no');
+            document.getElementById('status').textContent = 'NO';
+            document.getElementById('status-details').textContent = 'Veri alınamadı. NOAA kaprisli.';
+            updateTimestamp();
           }
-        };
-        
-        xhr.onerror = function() {
-          console.warn('XHR request failed');
-          // Keep default state and show error
-          document.getElementById('error-message').textContent = 'Connection error: Unable to reach NOAA services. Using last known status.';
-          document.getElementById('error-message').style.display = 'block';
-          setTimeout(function() {
-            document.getElementById('error-message').style.display = 'none';
-          }, 5000);
-        };
-        
-        xhr.send();
-      }
+        })
+        .catch(err => {
+          console.error("Proxy erişim hatası:", err);
+          
+          // Fallback to default state on error
+          document.body.setAttribute('data-status', 'no');
+          document.getElementById('status').textContent = 'NO';
+          document.getElementById('status-details').textContent = 'Proxy çöktü. Uzayda yalnız kaldık.';
+          updateTimestamp();
+        });
     }
     
-    // Process alert data from NOAA API
+    // Process alert data from NOAA
     function processAlertData(alerts) {
-      if (!alerts || !Array.isArray(alerts)) {
-        console.error('Invalid alert data received:', alerts);
-        return;
-      }
-      
       // Find strongest storm for "last major" display
-      var strongStorms = [];
-      for (var i = 0; i < alerts.length; i++) {
-        var alert = alerts[i];
-        if (!alert || !alert.message) continue;
-        
-        if (alert.message.indexOf('K-index of 7') !== -1 || 
-            alert.message.indexOf('K-index of 8') !== -1 || 
-            alert.message.indexOf('K-index of 9') !== -1) {
-          strongStorms.push(alert);
-        }
-      }
+      const strongStorms = alerts.filter(alert => {
+        if (!alert || !alert.message) return false;
+        return alert.message.includes('K-index of 7') || 
+               alert.message.includes('K-index of 8') || 
+               alert.message.includes('K-index of 9');
+      });
       
       if (strongStorms.length > 0) {
         // Sort by issue time
-        strongStorms.sort(function(a, b) {
-          var timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
-          var timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
+        strongStorms.sort((a, b) => {
+          const timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
+          const timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
           return timeB - timeA; // Most recent first
         });
         
-        var lastStorm = strongStorms[0];
-        var stormDate = new Date(lastStorm.issueTime || lastStorm.messageIssueTime || Date.now());
+        const lastStorm = strongStorms[0];
+        const stormDate = new Date(lastStorm.issueTime || lastStorm.messageIssueTime || Date.now());
         
-        var kpValue = 7;
-        if (lastStorm.message.indexOf('K-index of 9') !== -1) {
+        let kpValue = 7;
+        if (lastStorm.message.includes('K-index of 9')) {
           kpValue = 9;
-        } else if (lastStorm.message.indexOf('K-index of 8') !== -1) {
+        } else if (lastStorm.message.includes('K-index of 8')) {
           kpValue = 8;
         }
         
@@ -650,44 +573,46 @@
       }
       
       // Find most recent alert (if any)
-      if (alerts && alerts.length > 0) {
+      if (alerts.length > 0) {
         // Sort by issue time
-        alerts.sort(function(a, b) {
+        alerts.sort((a, b) => {
           if (!a || !b) return 0;
-          var timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
-          var timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
+          const timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
+          const timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
           return timeB - timeA; // Most recent first
         });
         
-        var latestAlert = alerts[0];
+        const latestAlert = alerts[0];
         if (latestAlert && latestAlert.message) {
-          var alertTime = new Date(latestAlert.issueTime || latestAlert.messageIssueTime || Date.now());
-          var now = new Date();
+          const alertTime = new Date(latestAlert.issueTime || latestAlert.messageIssueTime || Date.now());
+          const now = new Date();
           
           // Check if alert is recent (within 24 hours)
           if ((now - alertTime) < 24 * 60 * 60 * 1000) {
             // Extract Kp value
-            var kpValue = 6; // Default
-            if (latestAlert.message.indexOf('K-index of 9') !== -1) kpValue = 9;
-            else if (latestAlert.message.indexOf('K-index of 8') !== -1) kpValue = 8; 
-            else if (latestAlert.message.indexOf('K-index of 7') !== -1) kpValue = 7;
+            let kpValue = 0; // Default
+            if (latestAlert.message.includes('K-index of 9')) kpValue = 9;
+            else if (latestAlert.message.includes('K-index of 8')) kpValue = 8; 
+            else if (latestAlert.message.includes('K-index of 7')) kpValue = 7;
+            else if (latestAlert.message.includes('K-index of 6')) kpValue = 6;
+            else if (latestAlert.message.includes('K-index of 5')) kpValue = 5;
+            else if (latestAlert.message.includes('K-index of 4')) kpValue = 4;
             
-            // Set YES status with Kp value
-            document.body.setAttribute('data-status', 'yes');
-            document.body.removeAttribute('data-error');
-            document.getElementById('status').textContent = 'YES';
-            document.getElementById('status-details').textContent = 
-              'Kp ' + kpValue + ' • High aurora chance – look north!';
-            
-            updateTimestamp();
-            return;
+            // High enough to be considered a storm?
+            if (kpValue >= 5) {
+              document.body.setAttribute('data-status', 'yes');
+              document.getElementById('status').textContent = 'YES';
+              document.getElementById('status-details').textContent = 
+                'Kp ' + kpValue + ' • High aurora chance – look north!';
+              updateTimestamp();
+              return;
+            }
           }
         }
       }
       
-      // No recent alerts found - set/keep NO status
+      // No storm conditions found
       document.body.setAttribute('data-status', 'no');
-      document.body.removeAttribute('data-error');
       document.getElementById('status').textContent = 'NO';
       document.getElementById('status-details').textContent = 'Quiet for now. Check back later.';
       updateTimestamp();
