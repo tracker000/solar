@@ -1,631 +1,547 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!--
+    Solar Storm NOW – single‑file, fully‑functional rewrite 2025‑05‑20
+    ‑ Uses async/await, graceful CORS fallback, proper NOAA alerts parsing
+    ‑ Mobile‑first responsive layout, accessibility‑minded, minimal global scope
+  -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Solar Storm NOW? – Live Geomagnetic Alert</title>
-  <meta name="description" content="Real-time solar storm alerts and geomagnetic activity tracker. Check if there's a solar storm happening right now and see aurora visibility chances based on live space weather data.">
-  
-  <!-- Favicon -->
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='28' fill='%23ff9900'/></svg>">
-  
+  <title>Solar Storm NOW – Live Geomagnetic Alert</title>
+  <meta name="description" content="Real‑time solar storm alerts and aurora visibility tracker built only with client‑side code.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23ff9900'/%3E%3C/svg%3E">
   <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   
   <style>
     :root {
-      --yes-color: #ff3333;
-      --no-color: #00e676;
-      --error-color: #ff9800;
-      --aurora-line: #ff9800;
-      --bg-color: #111;
-      --text-color: #fff;
-      --glow-color: rgba(0, 255, 180, 0.4);
+      --clr-yes: #ff3333;
+      --clr-no: #00e676;
+      --clr-error: #ff9800;
+      --clr-text: #fff;
+      --clr-bg: #0e0f11;
       --kp-low: #00e676;
-      --kp-medium: #ffeb3b;
+      --kp-med: #ffeb3b;
       --kp-high: #ff3333;
+      --glow: rgba(0, 255, 180, .45);
     }
+
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;min-height:100vh;display:flex;flex-direction:column;background:var(--clr-bg);color:var(--clr-text);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+
+    /* animated aurora backdrop */
+    .aurora{position:fixed;inset:0;background:linear-gradient(-45deg,#001,#004,#040,#080);background-size:400% 400%;animation:aurora 20s ease infinite;opacity:.12;pointer-events:none;z-index:-1}
+    @keyframes aurora{0%{background-position:0 50%}50%{background-position:100% 50%}100%{background-position:0 50%}}
+
+    header{padding:1rem;text-align:center}
+    h1{font-size:clamp(1.8rem,5vw,2.8rem);text-shadow:0 0 12px var(--glow)}
+
+    main{width:100%;max-width:1100px;margin:auto;padding:1rem;flex:1}
+    #status{font-size:clamp(3rem,12vw,6rem);font-weight:700}
+    #details{font-size:clamp(1rem,4vw,1.6rem)}
+    #timestamp{font-size:.9rem;opacity:.75}
+    [data-state="yes"] #status{color:var(--clr-yes)}
+    [data-state="no"] #status{color:var(--clr-no)}
+    [data-state="error"] #status{color:var(--clr-error)}
+
+    #map-wrap{position:relative;height:40vh;margin:1.2rem 0;border-radius:.5rem;overflow:hidden}
+    #map{height:100%;width:100%}
+    .overlay{position:absolute;bottom:.5rem;left:.5rem;background:#000a;padding:.25rem .6rem;border-radius:.25rem;font-size:.8rem}
+    #loc-btn{position:absolute;top:.5rem;right:.5rem;background:#fff;border:0;border-radius:.25rem;padding:.45rem .55rem;font-size:1rem;cursor:pointer;box-shadow:0 0 5px #000a}
+    #map-error{display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);color:#fff;text-align:center;padding-top:20%;font-weight:bold}
+
+    details{margin:1.2rem 0;padding:.8rem;background:#ffffff10;border-radius:.4rem}
+    summary{cursor:pointer;font-weight:600}
+
+    ul.kp{margin-top:.8rem;padding-left:1.4rem}
+    .kp-6{color:#ffeb3b}.kp-7{color:#ff9800}.kp-8{color:#ff5722}.kp-9{color:#f44336}
+
+    footer{text-align:center;font-size:.8rem;opacity:.7;padding:1rem}
+    .links{display:flex;justify-content:center;gap:1rem;margin-top:.3rem}
+    .links a{color:var(--clr-text);text-decoration:none}
+    .links a:hover{text-decoration:underline}
     
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background-color: var(--bg-color);
-      color: var(--text-color);
-      line-height: 1.6;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      overflow-x: hidden;
-      position: relative;
-    }
-    
-    /* Aurora Background Animation */
-    .aurora-bg {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      opacity: 0.12;
-      pointer-events: none;
-      background: linear-gradient(-45deg, #000, #009, #060, #090);
-      background-size: 400% 400%;
-      animation: aurora-flow 20s ease infinite;
-      z-index: -1;
-    }
-    
-    @keyframes aurora-flow {
-      0% { background-position: 0% 50% }
-      50% { background-position: 100% 50% }
-      100% { background-position: 0% 50% }
-    }
-    
-    .container {
-      width: 100%;
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 1rem;
-      flex: 1;
-    }
-    
-    header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 1rem 0;
-    }
-    
-    h1 {
-      font-size: clamp(1.8rem, 5vw, 3rem);
-      text-align: center;
-      margin-bottom: 1rem;
-      text-shadow: 0 0 12px var(--glow-color);
-    }
-    
-    #status-container {
-      text-align: center;
-      margin: 2rem 0;
-    }
-    
-    #status {
-      font-size: clamp(3rem, 12vw, 6rem);
-      font-weight: bold;
-      margin-bottom: 0.5rem;
-    }
-    
-    #status-details {
-      font-size: clamp(1rem, 4vw, 1.5rem);
-      margin-bottom: 1rem;
-    }
-    
-    #timestamp {
-      font-size: 0.9rem;
-      opacity: 0.8;
-    }
-    
-    body[data-status="yes"] #status {
-      color: var(--yes-color);
-    }
-    
-    body[data-status="no"] #status {
-      color: var(--no-color);
-    }
-    
-    body[data-error="true"] #status {
-      color: var(--error-color);
-    }
-    
-    #map-container {
-      position: relative;
-      height: 40vh;
-      margin: 1rem 0;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    
-    #map {
-      height: 100%;
-      width: 100%;
-    }
-    
-    .map-overlay {
-      position: absolute;
-      bottom: 10px;
-      left: 10px;
-      background: rgba(0, 0, 0, 0.7);
-      padding: 5px 10px;
-      border-radius: 4px;
-      z-index: 1000;
-      font-size: 0.8rem;
-    }
-    
-    #locate-btn {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      background: white;
-      border: none;
-      border-radius: 4px;
-      padding: 8px;
-      z-index: 1000;
-      cursor: pointer;
-      box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
-    }
-    
-    details {
-      margin: 1rem 0;
-      padding: 0.8rem;
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 4px;
-    }
-    
-    summary {
-      cursor: pointer;
-      font-weight: bold;
-    }
-    
-    .kp-list {
-      margin: 1rem 0;
-      padding-left: 1.5rem;
-    }
-    
-    .kp-list li {
-      margin-bottom: 0.5rem;
-    }
-    
-    .kp-6 { color: #ffeb3b; }
-    .kp-7 { color: #ff9800; }
-    .kp-8 { color: #ff5722; }
-    .kp-9 { color: #f44336; }
-    
-    #notification-settings {
-      margin: 1rem 0;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      justify-content: center;
-    }
-    
-    select {
-      padding: 0.3rem;
-      border-radius: 4px;
-      background: #333;
-      color: white;
-      border: 1px solid #555;
-    }
-    
-    footer {
-      margin-top: 2rem;
-      text-align: center;
-      font-size: 0.8rem;
-      opacity: 0.7;
-      padding: 1rem 0;
-    }
-    
-    .footer-links {
-      display: flex;
-      justify-content: center;
-      gap: 1rem;
-      margin-top: 0.5rem;
-    }
-    
-    .footer-links a {
-      color: var(--text-color);
-      text-decoration: none;
-    }
-    
-    .footer-links a:hover {
-      text-decoration: underline;
-    }
-    
-    textarea {
-      width: 100%;
-      height: 4rem;
-      background: #222;
-      color: white;
-      border: 1px solid #444;
-      border-radius: 4px;
-      padding: 0.5rem;
-    }
-    
-    #error-message {
-      color: var(--error-color);
-      text-align: center;
-      display: none;
-      margin: 1rem 0;
-      padding: 0.5rem;
-      background: rgba(255, 152, 0, 0.1);
-      border-radius: 4px;
-    }
-    
-    @media (max-height: 375px) {
-      #map-container {
-        height: 60vh;
-      }
-    }
-    
-    /* Embed mode */
-    body.embed-mode {
-      min-height: 180px;
-      height: 180px;
-      overflow: hidden;
-    }
-    
-    body.embed-mode #map-container,
-    body.embed-mode .ad-container,
-    body.embed-mode details,
-    body.embed-mode #notification-settings,
-    body.embed-mode footer {
-      display: none;
-    }
-    
-    body.embed-mode h1 {
-      font-size: clamp(1.2rem, 4vw, 1.6rem);
-      margin-bottom: 0.5rem;
-    }
-    
-    body.embed-mode #status {
-      font-size: clamp(2rem, 8vw, 3rem);
-    }
-    
-    body.embed-mode #status-details {
-      font-size: clamp(0.8rem, 3vw, 1rem);
-    }
-    
-    body.embed-mode #timestamp {
-      font-size: 0.7rem;
-    }
-    
-    body.embed-mode .container {
-      padding: 0.5rem;
-    }
+    .time-info {display: flex; justify-content: center; gap: 1rem; font-size: 0.9rem; opacity: 0.85;}
+    #local-time {margin-left: 0.5rem;}
+
+    /* mobile‑short embed mode */
+    body.embed{height:180px;overflow:hidden}
+    body.embed #map-wrap,body.embed details,body.embed footer,body.embed #kp-select{display:none}
+    body.embed h1{font-size:clamp(1.2rem,4vw,1.6rem);margin-bottom:.3rem}
+    body.embed #status{font-size:clamp(2.3rem,8vw,3.2rem)}
+    @media(max-height:360px){#map-wrap{height:55vh}}
   </style>
 </head>
 <body>
-  <div class="aurora-bg"></div>
-  
-  <div class="container">
-    <header>
-      <div>
-        <h1 title="Live space weather updates">Solar Storm NOW? ❓</h1>
+  <div class="aurora"></div>
+  <header><h1 title="Live space‑weather updates">Solar Storm NOW ❓</h1></header>
+
+  <main id="app" data-state="no">
+    <section style="text-align:center;margin:1.4rem 0">
+      <div id="status" aria-live="polite">…</div>
+      <div id="details" aria-live="polite">Checking space weather…</div>
+      <div class="time-info">
+        <span id="timestamp">—</span>
+        <span id="local-time"></span>
       </div>
-    </header>
-    
-    <div id="status-container">
-      <div id="status" aria-live="polite">Loading...</div>
-      <div id="status-details" aria-live="polite">Checking space weather alerts...</div>
-      <div id="timestamp">Last updated: Loading...</div>
+    </section>
+
+    <div id="err" role="alert" style="display:none;text-align:center;color:var(--clr-error);margin:.8rem 0"></div>
+
+    <div id="map-wrap">
+      <div id="map" aria-label="Aurora visibility map"></div>
+      <div id="map-error">Map could not be loaded</div>
+      <div class="overlay">Orange line = approximate aurora visibility zone (≈Kp6)</div>
+      <button id="loc-btn" title="Zoom to my location" aria-label="Find my location">📍</button>
     </div>
-    
-    <div id="error-message" aria-live="assertive" role="alert"></div>
-    
-    <div id="map-container">
-      <div id="map" aria-label="Aurora visibility map showing Kp6 aurora line"></div>
-      <div class="map-overlay">Orange line = aurora zone (Kp6)</div>
-      <button id="locate-btn" title="Zoom to my location" aria-label="Find my location on map">📍</button>
-    </div>
-    
+
     <p id="last-major">Last strong storm: —</p>
-    
+
     <details>
-      <summary>What's the Kp index? (tap)</summary>
-      <p>The Kp index measures geomagnetic activity on a scale from 0-9, indicating the likelihood of seeing auroras:</p>
-      <ul class="kp-list">
-        <li class="kp-6">Kp 6: Minor storm - Aurora visible at higher latitudes (Canada, Northern Europe)</li>
-        <li class="kp-7">Kp 7: Moderate storm - Aurora may be visible in northern US states, Germany, UK</li>
-        <li class="kp-8">Kp 8: Strong storm - Aurora potentially visible much further south</li>
-        <li class="kp-9">Kp 9: Extreme storm - Rare event, aurora visible at very low latitudes</li>
+      <summary>What's the Kp index?</summary>
+      <p>The planetary Kp index gauges geomagnetic activity (0–9). Higher values mean auroras visible farther south:</p>
+      <ul class="kp">
+        <li class="kp-6">Kp 6 – Minor storm: aurora in Canada, Scandinavia</li>
+        <li class="kp-7">Kp 7 – Moderate: possible in northern US, Germany, UK</li>
+        <li class="kp-8">Kp 8 – Strong: aurora may reach central US &amp; Europe</li>
+        <li class="kp-9">Kp 9 – Extreme: rare, aurora at very low latitudes</li>
       </ul>
     </details>
-    
+
     <details>
-      <summary>Data & Privacy</summary>
-      <p>This site pulls data from space weather services. No cookies are used, no personally identifiable information is stored, and all processing happens client-side in your browser.</p>
+      <summary>Data &amp; Privacy</summary>
+      <p>Data from NOAA SWPC is fetched client‑side; no cookies or personal info stored. Your location data is only used locally for map positioning and is never sent to any server.</p>
     </details>
-    
-    <div id="notification-settings">
-      <label for="kp-threshold">Notify me for Kp ≥</label>
-      <select id="kp-threshold" aria-label="Select Kp threshold for notifications">
-        <option value="6">6</option>
-        <option value="7">7</option>
-        <option value="8">8</option>
-        <option value="9">9</option>
-      </select>
-    </div>
-    
-    <details>
-      <summary>Embed this widget</summary>
-      <textarea readonly aria-label="Embed code for widget">
-<iframe src="https://solarstormnow.com/?embed=1" width="300" height="180" style="border:0" title="Solar Storm NOW - Live Geomagnetic Alert"></iframe>
-      </textarea>
-    </details>
-  </div>
-  
+  </main>
+
   <footer>
     <div>SolarStormNow.com</div>
-    <div class="footer-links">
-      <a href="/privacy.html">Privacy Policy</a>
-      <a href="/cookies.html">Cookie Policy</a>
-    </div>
+    <div class="links"><a href="/privacy.html">Privacy</a><a href="/cookies.html">Cookies</a></div>
   </footer>
-  
+
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  
-  <!-- Main JS -->
+
   <script>
-    // Global variables
-    let map;
-    let auroraLayer;
-    let lastCheck = 0;
-    let refreshInterval = 30 * 60 * 1000; // 30 minutes
+  (function(){
+    "use strict";
+
+    /* ---------- config ---------- */
+    const NOAA_URL = "https://services.swpc.noaa.gov/products/alerts.json";
+    const PROXY_URL = "https://api.allorigins.win/raw?url="+encodeURIComponent(NOAA_URL);
+    const BACKUP_PROXY = "https://corsproxy.io/?"+encodeURIComponent(NOAA_URL);
+    const REFRESH_MS = 30*60*1000; // 30 min
+    const STORED_LOCATION_KEY = "solar_storm_user_location";
+
+    /* ---------- helper ---------- */
+    const $ = sel => document.querySelector(sel);
     
-    // NOAA API with reliable CORS proxy
-    const NOAA_API_URL = 'https://services.swpc.noaa.gov/products/alerts.json';
-    const PROXY_URL = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(NOAA_API_URL);
-    
-    // Aurora line coordinates for Kp6
-    const kp6Data = [
-      [74, -168], [74, -160], [74, -152], [73, -144], [73, -136], 
-      [72, -128], [71, -120], [70, -112], [69, -104], [68, -96], 
-      [67, -88], [66, -80], [65, -72], [65, -64], [64, -56], 
-      [64, -48], [64, -40], [64, -32], [64, -24], [64, -16], 
-      [64, -8], [64, 0], [64, 8], [64, 16], [64, 24], 
-      [65, 32], [65, 40], [65, 48], [66, 56], [66, 64], 
-      [67, 72], [67, 80], [68, 88], [68, 96], [69, 104], 
-      [70, 112], [70, 120], [71, 128], [72, 136], [72, 144], 
-      [73, 152], [73, 160], [74, 168], [74, 176], [74, -176]
-    ];
-    
-    // Check if we're in embed mode
-    const isEmbedMode = window.location.search.indexOf('embed=1') !== -1;
-    if (isEmbedMode) {
-      document.body.classList.add('embed-mode');
+    function setState(s) {
+      $("#app").setAttribute("data-state", s);
+      // Notify screen readers about state change
+      const statusArea = $("#status");
+      statusArea.setAttribute("aria-live", "assertive");
+      setTimeout(() => statusArea.setAttribute("aria-live", "polite"), 1000);
     }
     
-    // User settings
-    let userKpThreshold = 6;
-    try {
-      const storedThreshold = localStorage.getItem('kpThreshold');
-      if (storedThreshold) {
-        userKpThreshold = parseInt(storedThreshold);
+    // Parse UTC string safely for all browsers
+    function parseUtc(s) {
+      if (!s) return new Date(NaN); // Invalid date for missing values to sort them properly
+      
+      // Add 'Z' if not already having a timezone indicator
+      if (!/[zZ]$/.test(s) && !s.includes(" UTC")) {
+        s += 'Z';
       }
-    } catch (e) {
-      console.warn('localStorage not available');
+      
+      // "2025-05-20 08:42:00 UTC" -> "2025-05-20T08:42:00Z" (ISO-8601)
+      return new Date(s.replace(' ','T').replace(' UTC','Z'));
     }
     
-    // Initialize on document load
-    document.addEventListener('DOMContentLoaded', function() {
-      // Set up KP threshold in UI
-      document.getElementById('kp-threshold').value = userKpThreshold;
-      document.getElementById('kp-threshold').addEventListener('change', function() {
-        userKpThreshold = parseInt(this.value);
+    // Format UTC time
+    function fmtUTC(d) {
+      return d.toISOString().replace("T"," ").substring(0,16)+" UTC";
+    }
+    
+    function fmtLocal(d) {
+      return "(Local: " + new Date(d).toLocaleString() + ")";
+    }
+    
+    // Improved Kp extraction with wider pattern matching and safe return structure
+    function getKpFromMsg(msg) {
+      if (!msg) return {val: 0, raw: '0'};
+      
+      // Try all possible Kp formats in order of likelihood, with type metadata
+      const patterns = [
+        {re: /K-index of (\d+(?:\.\d+)?\+?)/i},
+        {re: /K[pP]?\s*=?\s*([0-9](?:\.[0-9])?\+?)/},
+        {re: /(?:kp|kp-index|k-index)[^\d]*(\d+(?:\.[0-9])?\+?)/i},
+        {re: /G([1-5])/, g: true}
+      ];
+      
+      for (const {re, g} of patterns) {
+        const match = msg.match(re);
+        if (match) {
+          // Save original raw value for display purposes
+          const rawValue = match[1];
+          // Parse the numeric part
+          let value = parseFloat(rawValue);
+          
+          // For G-scale, convert to Kp (G1=5, G2=6, G3=7, G4=8, G5=9)
+          if (g) {
+            value = 4 + parseInt(value);
+          }
+          
+          // Add 0.3 for "+" values as approximation
+          if (rawValue.includes('+')) {
+            value += 0.3;
+          }
+          
+          // Return an object with both raw and calculated values
+          return {val: value, raw: rawValue};
+        }
+      }
+      return {val: 0, raw: '0'};
+    }
+
+    /* ---------- NOAA fetch with multiple fallbacks ---------- */
+    async function fetchAlerts() {
+      const sources = [
+        { url: NOAA_URL, direct: true },
+        { url: PROXY_URL, direct: false },
+        { url: BACKUP_PROXY, direct: false }
+      ];
+      
+      let lastError;
+      
+      for (const source of sources) {
         try {
-          localStorage.setItem('kpThreshold', userKpThreshold);
-        } catch (e) {
-          console.warn('localStorage not available');
-        }
-      });
-      
-      // Initialize map if not in embed mode
-      if (!isEmbedMode) {
-        try {
-          initMap();
-        } catch (e) {
-          console.error("Map initialization error:", e);
-          document.getElementById('map-container').style.display = 'none';
-        }
-      }
-      
-      // Set initial status to NO as default state
-      setDefaultState();
-      
-      // Then check if there's a storm
-      checkStormStatus();
-      
-      // Set up refresh interval
-      setInterval(checkStormStatus, refreshInterval);
-    });
-    
-    // Set default "NO" state initially
-    function setDefaultState() {
-      document.body.setAttribute('data-status', 'no');
-      document.body.removeAttribute('data-error');
-      document.getElementById('status').textContent = 'NO';
-      document.getElementById('status-details').textContent = 'Quiet for now. Checking for updates...';
-      updateTimestamp();
-    }
-    
-    // Initialize map
-    function initMap() {
-      // Create map with appropriate attributes
-      map = L.map('map', {
-        attributionControl: true,
-        zoomControl: true,
-        minZoom: 2,
-        maxZoom: 10
-      }).setView([50, 0], 2);
-      
-      // Add base tile layer
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        noWrap: false
-      }).addTo(map);
-      
-      // Add aurora line using the data
-      addAuroraLine();
-      
-      // Add locate button functionality
-      document.getElementById('locate-btn').addEventListener('click', function() {
-        if ("geolocation" in navigator) {
-          map.locate({setView: true, maxZoom: 5});
-        } else {
-          alert("Geolocation is not supported by your browser");
-        }
-      });
-      
-      // Handle location errors
-      map.on('locationerror', function(e) {
-        alert("Location access denied or unavailable");
-      });
-    }
-    
-    // Add aurora line to map
-    function addAuroraLine() {
-      try {
-        // Clear old layer if exists
-        if (auroraLayer) {
-          map.removeLayer(auroraLayer);
-        }
-        
-        // Add new polyline using the data
-        auroraLayer = L.polyline(kp6Data, {
-          color: "#ff9800", 
-          weight: 2,
-          opacity: 0.8,
-          className: "aurora-line"
-        }).addTo(map);
-      } catch (error) {
-        console.error('Error adding aurora line:', error);
-      }
-    }
-    
-    // Fetch current space weather status using reliable proxy
-    function checkStormStatus() {
-      // Show loading text during check
-      document.getElementById('status-details').textContent = 'Checking space weather alerts...';
-      document.getElementById('error-message').style.display = 'none';
-      
-      fetch(PROXY_URL)
-        .then(response => response.text())
-        .then(text => {
-          try {
-            // Gelen metni logla (ilk 200 karakteri)
-            console.log("Proxy response (first 200 chars):", text.slice(0, 200));
-            
-            // JSON dönüşümünü dene
-            const json = JSON.parse(text);
-            
-            // Veri doğru formatta mı kontrol et
-            if (Array.isArray(json)) {
-              processAlertData(json);
+          const options = { cache: "no-store" };
+          // Add timeout to prevent hanging requests
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
+          
+          options.signal = controller.signal;
+          const r = await fetch(source.url, options);
+          clearTimeout(timeoutId);
+          
+          if (!r.ok) throw new Error(`${source.direct ? 'Direct' : 'Proxy'} request failed: ${r.status}`);
+          
+          const data = await r.json();
+          // Validate the response structure
+          if (!Array.isArray(data)) {
+            console.warn("Warning: Data is not an array", data);
+            // Try to handle non-array response by wrapping it
+            if (typeof data === 'object') {
+              return [data]; // Convert single object to array
             } else {
-              throw new Error('Data is not an array');
-            }
-          } catch (e) {
-            console.error("Gelen veri JSON değil:", text.slice(0, 200));
-            
-            // Fallback to default state on error
-            document.body.setAttribute('data-status', 'no');
-            document.getElementById('status').textContent = 'NO';
-            document.getElementById('status-details').textContent = 'Veri alınamadı. NOAA kaprisli.';
-            updateTimestamp();
-          }
-        })
-        .catch(err => {
-          console.error("Proxy erişim hatası:", err);
-          
-          // Fallback to default state on error
-          document.body.setAttribute('data-status', 'no');
-          document.getElementById('status').textContent = 'NO';
-          document.getElementById('status-details').textContent = 'Proxy çöktü. Uzayda yalnız kaldık.';
-          updateTimestamp();
-        });
-    }
-    
-    // Process alert data from NOAA
-    function processAlertData(alerts) {
-      // Find strongest storm for "last major" display
-      const strongStorms = alerts.filter(alert => {
-        if (!alert || !alert.message) return false;
-        return alert.message.includes('K-index of 7') || 
-               alert.message.includes('K-index of 8') || 
-               alert.message.includes('K-index of 9');
-      });
-      
-      if (strongStorms.length > 0) {
-        // Sort by issue time
-        strongStorms.sort((a, b) => {
-          const timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
-          const timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
-          return timeB - timeA; // Most recent first
-        });
-        
-        const lastStorm = strongStorms[0];
-        const stormDate = new Date(lastStorm.issueTime || lastStorm.messageIssueTime || Date.now());
-        
-        let kpValue = 7;
-        if (lastStorm.message.includes('K-index of 9')) {
-          kpValue = 9;
-        } else if (lastStorm.message.includes('K-index of 8')) {
-          kpValue = 8;
-        }
-        
-        document.getElementById('last-major').textContent = 
-          'Last strong storm: ' + stormDate.toISOString().split('T')[0] + ' (Kp ' + kpValue + ')';
-      } else {
-        document.getElementById('last-major').textContent = 'No strong storms recorded recently';
-      }
-      
-      // Find most recent alert (if any)
-      if (alerts.length > 0) {
-        // Sort by issue time
-        alerts.sort((a, b) => {
-          if (!a || !b) return 0;
-          const timeA = new Date(a.issueTime || a.messageIssueTime || Date.now());
-          const timeB = new Date(b.issueTime || b.messageIssueTime || Date.now());
-          return timeB - timeA; // Most recent first
-        });
-        
-        const latestAlert = alerts[0];
-        if (latestAlert && latestAlert.message) {
-          const alertTime = new Date(latestAlert.issueTime || latestAlert.messageIssueTime || Date.now());
-          const now = new Date();
-          
-          // Check if alert is recent (within 24 hours)
-          if ((now - alertTime) < 24 * 60 * 60 * 1000) {
-            // Extract Kp value
-            let kpValue = 0; // Default
-            if (latestAlert.message.includes('K-index of 9')) kpValue = 9;
-            else if (latestAlert.message.includes('K-index of 8')) kpValue = 8; 
-            else if (latestAlert.message.includes('K-index of 7')) kpValue = 7;
-            else if (latestAlert.message.includes('K-index of 6')) kpValue = 6;
-            else if (latestAlert.message.includes('K-index of 5')) kpValue = 5;
-            else if (latestAlert.message.includes('K-index of 4')) kpValue = 4;
-            
-            // High enough to be considered a storm?
-            if (kpValue >= 5) {
-              document.body.setAttribute('data-status', 'yes');
-              document.getElementById('status').textContent = 'YES';
-              document.getElementById('status-details').textContent = 
-                'Kp ' + kpValue + ' • High aurora chance – look north!';
-              updateTimestamp();
-              return;
+              throw new Error("Invalid data format: not an array or object");
             }
           }
+          
+          // Filter out bad entries
+          const validData = data.filter(item => item && typeof item === 'object');
+          console.log(`Got ${validData.length} valid items from ${source.url}`);
+          return validData;
+        } catch (e) {
+          console.warn(`Failed with source ${source.url}:`, e);
+          lastError = e;
+          // Continue to next source
         }
       }
       
-      // No storm conditions found
-      document.body.setAttribute('data-status', 'no');
-      document.getElementById('status').textContent = 'NO';
-      document.getElementById('status-details').textContent = 'Quiet for now. Check back later.';
-      updateTimestamp();
+      // If we get here, all sources failed
+      throw new Error(`All data sources failed. Last error: ${lastError?.message || 'Unknown error'}`);
     }
-    
-    // Update timestamp
+
+    /* ---------- UI update ---------- */
     function updateTimestamp() {
       const now = new Date();
-      let timeString = now.toISOString();
-      timeString = timeString.replace('T', ' ').substring(0, 16) + ' UTC';
-      document.getElementById('timestamp').textContent = 'Last updated: ' + timeString;
-      lastCheck = now.getTime();
+      $("#timestamp").textContent = "Last updated: " + fmtUTC(now);
+      $("#local-time").textContent = fmtLocal(now); 
     }
+
+    function applyAlerts(alerts) {
+      if (!alerts || !alerts.length) { 
+        setState("no");
+        $("#status").textContent = "NO";
+        $("#details").textContent = "No alerts found. Space weather appears quiet.";
+        return;
+      }
+      
+      // Ensure data is properly structured and filter only geomagnetic storms
+      const geomagnetic = alerts.filter(alert => {
+        const productId = alert.product_id || "";
+        const message = alert.message || alert.alert_message || "";
+        return productId.includes("GEOMAGNETIC") || 
+               message.includes("GEOMAGNETIC") || 
+               message.includes("K-index") ||
+               message.includes("Kp") ||
+               message.includes("G1") ||
+               message.includes("G2") ||
+               message.includes("G3") ||
+               message.includes("G4") ||
+               message.includes("G5");
+      });
+      
+      if (!geomagnetic.length) {
+        setState("no");
+        $("#status").textContent = "NO";
+        $("#details").textContent = "No geomagnetic storm alerts currently.";
+        return;
+      }
+      
+      // sort newest first by issue time - use safe date parsing
+      geomagnetic.sort((a, b) => {
+        const aTime = a.issue_datetime || a.issue_time || "";
+        const bTime = b.issue_datetime || b.issue_time || "";
+        const dateA = parseUtc(aTime);
+        const dateB = parseUtc(bTime);
+        
+        // Fallback to string comparison if parsing fails
+        if (isNaN(dateA) || isNaN(dateB)) {
+          return aTime > bTime ? -1 : 1;
+        }
+        
+        return dateB - dateA;
+      });
+
+      const newest = geomagnetic[0];
+      const messageText = newest.message || newest.alert_message || "";
+      const kp = getKpFromMsg(messageText);
+      
+      // Check if alert is recent (within last 24h)
+      const issueTime = newest.issue_datetime || newest.issue_time || "";
+      const issueDate = parseUtc(issueTime);
+      const recent = !isNaN(issueDate) && 
+                    (Date.now() - issueDate.getTime()) < 24 * 3600 * 1000;
+      
+      let issueTimeFormatted;
+      try {
+        issueTimeFormatted = !isNaN(issueDate) ? fmtUTC(issueDate) : issueTime;
+      } catch (e) {
+        issueTimeFormatted = issueTime || "unknown time";
+      }
+
+      if (recent && kp.val >= 5) {
+        setState("yes");
+        $("#status").textContent = "YES";
+        // Use original format if available
+        const kpDisplay = kp.raw || (Number.isInteger(kp.val) ? kp.val : kp.val.toFixed(1));
+        $("#details").textContent = `Kp ${kpDisplay} • High aurora chance – look north!`;
+        $("#details").innerHTML += `<br><span style="font-size:0.9rem">Alert issued: ${issueTimeFormatted}</span>`;
+      } else {
+        setState("no");
+        $("#status").textContent = "NO";
+        $("#details").textContent = "Quiet for now. Check back later.";
+        if (kp.val > 0) {
+          const kpDisplay = kp.raw || (Number.isInteger(kp.val) ? kp.val : kp.val.toFixed(1));
+          $("#details").innerHTML += `<br><span style="font-size:0.9rem">Current Kp index: ${kpDisplay}</span>`;
+        }
+      }
+
+      // last major storm (Kp≥7)
+      const major = geomagnetic.find(alert => {
+        const msg = alert.message || alert.alert_message || "";
+        return getKpFromMsg(msg).val >= 7;
+      });
+      
+      if (major) {
+        const kpMajor = getKpFromMsg(major.message || major.alert_message || "");
+        const majorTime = major.issue_datetime || major.issue_time || "";
+        const majorDate = parseUtc(majorTime);
+        let majorDateStr;
+        
+        try {
+          majorDateStr = !isNaN(majorDate) ? 
+                        majorDate.toISOString().split('T')[0] : 
+                        majorTime.split(' ')[0];
+        } catch (e) {
+          majorDateStr = "date unknown";
+        }
+        
+        const kpMajorDisplay = kpMajor.raw || (Number.isInteger(kpMajor.val) ? kpMajor.val : kpMajor.val.toFixed(1));
+        $("#last-major").textContent = `Last strong storm: ${majorDateStr} (Kp ${kpMajorDisplay})`;
+      }
+      
+      updateTimestamp();
+    }
+
+    /* ---------- error display ---------- */
+    function showError(msg) {
+      setState("error");
+      $("#status").textContent = "ERR";
+      $("#details").textContent = "Data unavailable";
+      const box = $("#err");
+      box.textContent = `Error: ${msg}. Will retry in a few minutes.`;
+      box.style.display = "block";
+      updateTimestamp();
+    }
+
+    /* ---------- map ---------- */
+    // Aurora oval approximation for Kp=6 (geomagnetic latitude ~60°)
+    // Note: Coordinates adjusted to better match actual aurora visibility at Kp=6
+    const kp6line = [
+      [60,-170],[60,-160],[60,-150],[60,-140],[60,-130],[60,-120],
+      [59,-110],[59,-100],[58,-90],[58,-80],[57,-70],[57,-60],
+      [56,-50],[56,-40],[56,-30],[56,-20],[56,-10],[56,0],
+      [56,10],[56,20],[56,30],[56,40],[56,50],[57,60],
+      [57,70],[58,80],[58,90],[59,100],[59,110],[60,120],
+      [60,130],[60,140],[60,150],[60,160],[60,170]
+    ];
+
+    let map, auroraLayer;
+    
+    function initMap() {
+      try {
+        map = L.map("map", {
+          minZoom: 2,
+          maxZoom: 10,
+          maxBounds: [[-85, -180], [85, 180]], // Prevent excessive scrolling
+          maxBoundsViscosity: 1.0 // Stick within bounds
+        }).setView([55, 0], 2);
+        
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "© OpenStreetMap contributors",
+          noWrap: true // Prevent map from repeating horizontally
+        }).addTo(map);
+        
+        // Draw aurora oval
+        auroraLayer = L.polyline(kp6line, {
+          color: "#ff9800",
+          weight: 2,
+          opacity: 0.8,
+          smoothFactor: 1.5
+        }).addTo(map);
+        
+        // Location button handler with storage
+        $("#loc-btn").onclick = () => {
+          if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              function(pos) {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                map.setView([lat, lng], 4);
+                
+                // Save location for future visits if supported
+                try {
+                  localStorage.setItem(STORED_LOCATION_KEY, JSON.stringify({lat, lng}));
+                } catch (e) {
+                  console.warn("Could not save location:", e);
+                }
+              },
+              function(err) {
+                console.warn("Geolocation error:", err);
+                alert("Could not access your location. " + err.message);
+              },
+              {timeout: 10000, enableHighAccuracy: false}
+            );
+          } else {
+            alert("Geolocation is not supported by your browser");
+          }
+        };
+        
+        // Try to restore previous location
+        try {
+          const savedLoc = localStorage.getItem(STORED_LOCATION_KEY);
+          if (savedLoc) {
+            const {lat, lng} = JSON.parse(savedLoc);
+            if (lat && lng) {
+              setTimeout(() => map.setView([lat, lng], 4), 1000);
+            }
+          }
+        } catch (e) {
+          console.warn("Could not restore saved location:", e);
+        }
+        
+      } catch (e) {
+        console.error("Map initialization failed:", e);
+        $("#map").style.display = "none";
+        $("#map-error").style.display = "block";
+      }
+    }
+
+    /* ---------- main refresh ---------- */
+    let retryTimer = null; // Prevent multiple retry timers
+    let isRefreshing = false; // Prevent concurrent refreshes
+    
+    async function refresh() {
+      // Skip if already refreshing or a retry is scheduled
+      if (isRefreshing || retryTimer) {
+        console.log("Skipping refresh, already in progress or retry scheduled");
+        return;
+      }
+      
+      try {
+        isRefreshing = true;
+        $("#details").textContent = "Checking space weather…";
+        $("#err").style.display = "none";
+        
+        const alerts = await fetchAlerts();
+        applyAlerts(alerts);
+      } catch (e) {
+        console.error("Refresh failed:", e);
+        showError(e.message || "Unknown error");
+        
+        // Schedule a single retry on error
+        if (!retryTimer) {
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            refresh();
+          }, 5*60*1000); // Retry in 5 minutes on error
+        }
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
+    /* ---------- boot ---------- */
+    (function boot() {
+      // Check for embed mode
+      const params = new URLSearchParams(location.search);
+      if (params.get("embed") === "1") {
+        document.body.classList.add("embed");
+      }
+      
+      // Initialize map with error handling
+      try {
+        initMap();
+      } catch (e) {
+        console.error("Map initialization completely failed:", e);
+        $("#map-wrap").innerHTML = "<p style='text-align:center;padding:2rem;'>Map could not be loaded</p>";
+      }
+      
+      // Set initial timestamp
+      updateTimestamp();
+      
+      // Initial data load
+      refresh();
+      
+      // Set up periodic refresh
+      setInterval(refresh, REFRESH_MS);
+      
+      // Add visibility change handler to refresh when tab becomes active again
+      document.addEventListener("visibilitychange", function() {
+        if (document.visibilityState === "visible") {
+          const timestampText = $("#timestamp").textContent.replace("Last updated: ", "").replace(" UTC", "");
+          const lastUpdate = parseUtc(timestampText);
+          
+          if (isNaN(lastUpdate)) {
+            // If we can't parse the timestamp, refresh anyway
+            refresh();
+            return;
+          }
+          
+          const minutesSinceUpdate = (Date.now() - lastUpdate.getTime()) / (60 * 1000);
+          
+          // Refresh if it's been more than 5 minutes since last update
+          if (minutesSinceUpdate > 5) {
+            refresh();
+          }
+        }
+      });
+    })();
+  })();
   </script>
 </body>
 </html>
