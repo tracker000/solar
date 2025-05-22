@@ -35,7 +35,12 @@
     @keyframes aurora{0%{background-position:0 50%}50%{background-position:100% 50%}100%{background-position:0 50%}}
 
     header{padding:1rem;text-align:center}
-    h1{font-size:clamp(1.8rem,5vw,2.8rem);text-shadow:0 0 12px var(--glow)}
+    h1{font-size:clamp(1.8rem,5vw,2.8rem);text-shadow:0 0 12px var(--glow);margin-bottom:1rem}
+
+    /* Navigation styles */
+    nav{font-size:0.9rem;opacity:0.8;margin-top:0.5rem}
+    nav a{color:var(--clr-text);text-decoration:none;padding:0 0.5rem}
+    nav a:hover{text-decoration:underline;color:var(--clr-no)}
 
     main{width:100%;max-width:1100px;margin:auto;padding:1rem;flex:1}
     #status{font-size:clamp(3rem,12vw,6rem);font-weight:700}
@@ -67,7 +72,7 @@
 
     /* mobile‑short embed mode */
     body.embed{height:180px;overflow:hidden}
-    body.embed #map-wrap,body.embed details,body.embed footer,body.embed #kp-select{display:none}
+    body.embed #map-wrap,body.embed details,body.embed footer,body.embed #kp-select,body.embed nav{display:none}
     body.embed h1{font-size:clamp(1.2rem,4vw,1.6rem);margin-bottom:.3rem}
     body.embed #status{font-size:clamp(2.3rem,8vw,3.2rem)}
     @media(max-height:360px){#map-wrap{height:55vh}}
@@ -77,7 +82,15 @@
 </head>
 <body>
   <div class="aurora"></div>
-  <header><h1 title="Live space‑weather updates">Solar Storm NOW ❓</h1></header>
+  <header>
+    <h1 title="Live space‑weather updates">Solar Storm NOW ❓</h1>
+    <nav id="main-nav">
+      <a href="/">Home</a> |
+      <a href="/privacy.html">Privacy</a> |
+      <a href="/cookies.html">Cookies</a> |
+      <a href="/blog.html">Blog</a>
+    </nav>
+  </header>
 
   <main id="app" data-state="no">
     <section style="text-align:center;margin:1.4rem 0">
@@ -503,6 +516,8 @@
       const params = new URLSearchParams(location.search);
       if (params.get("embed") === "1") {
         document.body.classList.add("embed");
+        const nav = document.querySelector("#main-nav");
+        if (nav) nav.style.display = "none";
       }
       
       // Initialize map with error handling
@@ -545,5 +560,7 @@
     })();
   })();
   </script>
+<script data-goatcounter="https://emiremir.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
 </body>
 </html>
